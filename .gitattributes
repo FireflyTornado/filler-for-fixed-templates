@@ -1,0 +1,6 @@
+# 统一换行处理：文本文件用仓库换行（LF），Windows 批处理脚本保持 CRLF
+* text=auto
+
+# .bat 必须用 CRLF，否则 Windows cmd 在部分情况下会执行异常
+*.bat text eol=crlf
+*.cmd text eol=crlf
