@@ -1,5 +1,7 @@
 # 模板填充工具（Template Filler Tool）
 
+> **语言切换：[English](README.en.md)**
+
 一个基于 Java Swing 的桌面小工具：将写好的固定模板填充成完整文本，并支持复制到剪贴板或保存为文件。
 
 ## 功能特性
@@ -45,18 +47,28 @@ build.bat
 ## 目录结构
 
 ```
-├── build.bat            # 编译源码并打包 TemplateTool.jar
-├── launcher.bat         # 一键运行
-├── TemplateTool.jar     # 打包好的可执行文件（由 build.bat 生成）
-├── template.conf        # 模板配置文件（用户自行修改）
-├── last_values.json     # 上次输入的记忆文件（自动生成，不入库）
-└── src/main/java/
-    └── com/firefly/
-        ├── Main.java                # 程序入口
-        ├── TemplateToolApp.java     # 主窗口（界面布局与事件处理）
-        ├── TemplateConstants.java   # 全局常量与默认配置
-        ├── core/                    # 配置读写、模板解析、渲染、表达式求值等
-        └── ui/                      # Swing 界面组件（输入区、结果区等）
+├── build.bat               # 编译源码并打包 TemplateTool.jar（自动查找 JDK）
+├── launcher.bat            # 一键运行（自动查找 java）
+├── template.conf           # 模板配置文件（若缺失也会在首次运行时自动生成）
+├── last_values.json        # 上次输入的记忆文件（每次使用完成后自动生成）
+└── src/main/java/com/firefly/
+    ├── Main.java                 # 程序入口：设置高 DPI / 系统外观，启动主窗口
+    ├── TemplateToolApp.java      # 主窗口：界面布局、事件处理、数据同步
+    ├── TemplateConstants.java    # 全局常量：文件名、自动日期变量、占位符/正则、默认配置
+    ├── core/                     # 逻辑层：配置读写、解析、渲染、求值等
+    │   ├── ConfigStore.java         # template.conf 读写
+    │   ├── ExpressionEvaluator.java # 安全算术表达式求值（+ - * / ** 与括号，自写递归下降解析）
+    │   ├── LastValuesStore.java     # last_values.json 读写（上次输入记忆，UTF-8 带 BOM）
+    │   ├── MiniJson.java            # JSON 读写
+    │   ├── TemplateParser.java      # 模板占位符解析：提取变量 / 自动日期 / 字符串变量
+    │   ├── TemplateRenderer.java    # 把模板渲染成最终结果（替换、求值、原样输出字符串）
+    │   ├── TextFileWriter.java      # 文本文件读写（UTF-8 带 BOM、换行转 CRLF，兼容记事本）
+    │   └── ValueNormalizer.java     # 数字输入校验/规范化（留空按 0，非数字返回 null）
+    └── ui/                     # Swing 界面组件
+        ├── ResultPanel.java          # 「结果输出」区（只读多行文本）
+        ├── ScrollablePanel.java      # 可滚动纵向表单面板（宽度自适应、高度随内容）
+        ├── StringInputPanel.java     # 「字符串输入」区（每个 [[字符串]] 一个多行输入框）
+        └── VariableInputPanel.java   # 「变量值输入」区（每个 {{变量}} 一行输入框，支持错误高亮）
 ```
 
 ## 许可证

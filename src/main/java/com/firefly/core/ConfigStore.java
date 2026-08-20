@@ -12,7 +12,7 @@ import java.util.regex.Matcher;
 /**
  * template.conf 的读写。
  * 规则：
- *   * 只读取 / 替换第一个 template = ... 行，其余行（注释）原样保留
+ *   * 只读取 / 替换 template = ... 行
  *   * 配置文件中用 \n 两个字符表示换行，读取时还原成真实换行
  *   * 首次运行配置文件不存在时，自动生成默认配置
  */
