@@ -59,7 +59,7 @@ public final class TemplateParser {
         return names;
     }
 
-    /** 返回模板中出现的自动日期变量（{{年}}/{{年月}}/{{年月日}}），按出现顺序去重。 */
+    /** 返回模板中出现的自动日期变量（{{今日…}}/{{昨日…}}），按出现顺序去重。 */
     public static List<String> extractAutoVariables(String template) {
         List<String> names = new ArrayList<>();
         Set<String> seen = new LinkedHashSet<>();

@@ -68,7 +68,7 @@ public final class TemplateToolApp extends JFrame {
         this.configStore = new ConfigStore(appDir);
         this.valuesStore = new LastValuesStore(appDir);
 
-        setSize(780, 800);
+        setSize(860, 900);
         setMinimumSize(new java.awt.Dimension(660, 660));
         setDefaultCloseOperation(WindowConstants.DO_NOTHING_ON_CLOSE);
         addWindowListener(new WindowAdapter() {
@@ -133,7 +133,7 @@ public final class TemplateToolApp extends JFrame {
         tplBottom.setBorder(BorderFactory.createEmptyBorder(4, 8, 8, 8));
         JButton saveTplBtn = new JButton("保存模板");
         JLabel tplHint = new JLabel(
-                "提示：数字用{{变量名}}，支持运算符{{变量1*变量2}}；日期变量用{{年月日}}；字符串用[[字符串]]");
+                "提示：数字用{{变量名}}，支持运算符{{变量1*变量2}}；日期变量用{{今日年月日}}/{{昨日年月日}}；字符串用[[字符串]]");
         tplHint.setForeground(Color.GRAY);
         tplBottom.add(tplHint, BorderLayout.WEST);
         tplBottom.add(saveTplBtn, BorderLayout.EAST);
@@ -336,12 +336,16 @@ public final class TemplateToolApp extends JFrame {
         saveLastInputs();
     }
 
-    /** 根据系统日期生成自动变量的替换值。 */
+    /** 根据系统日期生成自动变量的替换值。今日… 取当天，昨日… 取前一天。 */
     private static Map<String, String> autoValues(LocalDate now) {
+        LocalDate yesterday = now.minusDays(1);
         Map<String, String> map = new LinkedHashMap<>();
-        map.put("年", now.getYear() + "年");
-        map.put("年月", now.getYear() + "年" + now.getMonthValue() + "月");
-        map.put("年月日", now.getYear() + "年" + now.getMonthValue() + "月" + now.getDayOfMonth() + "日");
+        map.put("今日年", now.getYear() + "年");
+        map.put("今日年月", now.getYear() + "年" + now.getMonthValue() + "月");
+        map.put("今日年月日", now.getYear() + "年" + now.getMonthValue() + "月" + now.getDayOfMonth() + "日");
+        map.put("昨日年", yesterday.getYear() + "年");
+        map.put("昨日年月", yesterday.getYear() + "年" + yesterday.getMonthValue() + "月");
+        map.put("昨日年月日", yesterday.getYear() + "年" + yesterday.getMonthValue() + "月" + yesterday.getDayOfMonth() + "日");
         return map;
     }
 

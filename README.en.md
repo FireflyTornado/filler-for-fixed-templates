@@ -9,7 +9,7 @@ A lightweight desktop utility built with Java Swing: it fills a fixed template w
 - **Auto-generated input fields** → Each `{{variable}}` in the template becomes a numeric input field; empty fields default to `0`, and non-numeric input triggers a warning
 - **Add free-form strings** → `[[string]]` uses a large text input; the content is output verbatim (line breaks, spaces, and formatting preserved)
 - **Expression support** → e.g. `{{var1/var2}}`, supporting `+ - * / **` and parentheses, with results rounded to two decimal places
-- **Automatic dates** → `{{year}}`, `{{yearMonth}}`, `{{yearMonthDay}}` pull the current system date automatically
+- **Automatic dates** → `{{todayYear}}`, `{{todayYearMonth}}`, `{{todayYearMonthDay}}` pull today's system date automatically; `{{yesterdayYear}}`, `{{yesterdayYearMonth}}`, `{{yesterdayYearMonthDay}}` pull yesterday's date
 - **Remembers your last input** → Previously entered values are saved to `last_values.json` and restored the next time you open the tool
 - **Edit templates on the fly** → Modify and save directly in the UI, or open `template.conf` with your system editor
 
@@ -30,7 +30,8 @@ A lightweight desktop utility built with Java Swing: it fills a fixed template w
 | --- | --- | --- |
 | `{{variable}}` | Generates a numeric input field; empty defaults to `0` | `{{yesterdayData}}` |
 | `{{var1*var2}}` | Arithmetic expression, result rounded to 2 decimals | `{{monthlyTotal/monthlyPlan}}` |
-| `{{year}} {{yearMonth}} {{yearMonthDay}}` | Auto-fetched date variables | `{{yearMonthDay}}` |
+| `{{todayYear}} {{todayYearMonth}} {{todayYearMonthDay}}` | Auto-fetched today's date variables | `{{todayYearMonthDay}}` |
+| `{{yesterdayYear}} {{yesterdayYearMonth}} {{yesterdayYearMonthDay}}` | Auto-fetched yesterday's date variables | `{{yesterdayYearMonthDay}}` |
 | `[[stringName]]` | Multi-line text, output verbatim | `[[notes]]` |
 | `\n` | Line break in the template | `First line\nSecond line` |
 

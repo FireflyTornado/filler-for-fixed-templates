@@ -61,7 +61,7 @@ public final class VariableInputPanel extends JPanel {
             gc.fill = GridBagConstraints.HORIZONTAL;
             gc.gridwidth = GridBagConstraints.REMAINDER;
             String text = hasAuto
-                    ? "模板中没有需要填写的变量，但包含自动日期变量（{{年}}/{{年月}}/{{年月日}}），直接点“生成结果”即可。"
+                    ? "模板中没有需要填写的变量，但包含自动日期变量（{{今日年月日}}/{{昨日年月日}}），直接点“生成结果”即可。"
                     : "模板中没有找到 {{变量名}} 占位符，点“生成结果”会输出模板原文。";
             JLabel hint = new JLabel(text);
             hint.setForeground(HINT_FG);

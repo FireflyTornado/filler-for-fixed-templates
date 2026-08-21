@@ -20,9 +20,12 @@ public final class TemplateConstants {
     public static final String RESULT_FILENAME = "result.txt";
     public static final String VALUES_FILENAME = "last_values.json";
 
-    /** 自动日期：出现在模板中时，由系统日期自动填充，无需手动输入 */
+    /** 自动日期：出现在模板中时，由系统日期自动填充，无需手动输入。
+     *  今日… 取当天日期；昨日… 取前一天日期。 */
     public static final List<String> AUTO_VARS =
-            Collections.unmodifiableList(Arrays.asList("年", "年月", "年月日"));
+            Collections.unmodifiableList(Arrays.asList(
+                    "今日年", "今日年月", "今日年月日",
+                    "昨日年", "昨日年月", "昨日年月日"));
     public static final Set<String> AUTO_VAR_SET =
             Collections.unmodifiableSet(new HashSet<>(AUTO_VARS));
 
@@ -58,10 +61,10 @@ public final class TemplateConstants {
             + "#   * 用 {{变量名}} 在模板中标注占位符\n"
             + "#   * 打开工具后，会为每个变量自动生成一个输入框\n"
             + "#   * 输入留空时按 0 处理；输入非数字会给出友好提示\n"
-            + "#   * {{年}}、{{年月}}、{{年月日}} 会自动取系统日期填充，无需输入\n"
+            + "#   * {{今日年}}、{{今日年月}}、{{今日年月日}} 自动取当天日期；{{昨日年}}、{{昨日年月}}、{{昨日年月日}} 自动取前一天日期，均无需输入\n"
             + "#   * 支持算术表达式，如 {{数量*单价}}，结果保留两位小数\n"
             + "#   * 用 [[字符串名]] 标注字符串占位符，输入内容原样输出（含换行、空格、格式）\n"
             + "#   * 模板需要换行时，请使用 \\n\n"
             + "# ==================================================\n"
-            + "template = {{年月日}} 客户编号 {{编号}}：购买 {{数量}} 件，单价 {{单价}} 元，应付 {{金额}} 元。\\n备注：[[备注]]\n";
+            + "template = {{今日年月日}} 客户编号 {{编号}}：购买 {{数量}} 件，单价 {{单价}} 元，应付 {{金额}} 元。\\n备注：[[备注]]\n";
 }
