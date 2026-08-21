@@ -68,8 +68,7 @@ Building requires a JDK (with `javac` and `jar`). On success, `TemplateTool.jar`
     └── ui/                     # Swing UI components
         ├── ResultPanel.java          # "Result output" area (read-only multi-line text)
         ├── ScrollablePanel.java      # Scrollable vertical form panel (width adapts, height follows content)
-        ├── StringInputPanel.java     # "String input" area (a multi-line field per [[string]])
-        └── VariableInputPanel.java   # "Variable value input" area (a field per {{variable}}, with error highlighting)
+        └── InputPanel.java           # "Variable/string input" area (single-line {{var}}, multi-line [[string]], with error highlighting)
 ```
 
 ## License

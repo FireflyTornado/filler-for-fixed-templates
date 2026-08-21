@@ -13,7 +13,7 @@ public final class MiniJson {
     private MiniJson() {
     }
 
-    /** 把一个扁平字符串映射序列化成 JSON（带缩进，与 Python 的 indent=2 类似）。 */
+    /** 把一个扁平字符串映射序列化成 JSON（带缩进）。 */
     public static String toJson(Map<String, String> map) {
         StringBuilder sb = new StringBuilder("{\n");
         boolean first = true;
@@ -187,7 +187,7 @@ public final class MiniJson {
                 throw new IOException("JSON 格式错误：缺少值");
             }
             if ("null".equals(token)) {
-                return ""; // 与 Python json 把 null -> None 的处理对齐
+                return "";
             }
             return token;
         }

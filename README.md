@@ -68,8 +68,7 @@ build.bat
     └── ui/                     # Swing 界面组件
         ├── ResultPanel.java          # 「结果输出」区（只读多行文本）
         ├── ScrollablePanel.java      # 可滚动纵向表单面板（宽度自适应、高度随内容）
-        ├── StringInputPanel.java     # 「字符串输入」区（每个 [[字符串]] 一个多行输入框）
-        └── VariableInputPanel.java   # 「变量值输入」区（每个 {{变量}} 一行输入框，支持错误高亮）
+        └── InputPanel.java           # 「变量/字符串输入」区（变量 {{}} 单行、字符串 [[]] 多行，支持错误高亮）
 ```
 
 ## 许可证

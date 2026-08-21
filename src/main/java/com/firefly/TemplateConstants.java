@@ -1,9 +1,5 @@
 package com.firefly;
 
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.HashSet;
-import java.util.List;
 import java.util.Set;
 import java.util.regex.Pattern;
 
@@ -22,12 +18,9 @@ public final class TemplateConstants {
 
     /** 自动日期：出现在模板中时，由系统日期自动填充，无需手动输入。
      *  今日… 取当天日期；昨日… 取前一天日期。 */
-    public static final List<String> AUTO_VARS =
-            Collections.unmodifiableList(Arrays.asList(
-                    "今日年", "今日年月", "今日年月日",
-                    "昨日年", "昨日年月", "昨日年月日"));
     public static final Set<String> AUTO_VAR_SET =
-            Collections.unmodifiableSet(new HashSet<>(AUTO_VARS));
+            Set.of("今日年", "今日年月", "今日年月日",
+                    "昨日年", "昨日年月", "昨日年月日");
 
     /** 匹配 {{...}} 占位符；里面可以是变量名，也可以是算术表达式（如 {{数量*单价}}） */
     public static final Pattern PLACEHOLDER_RE = Pattern.compile("\\{\\{([^{}]*)\\}\\}");

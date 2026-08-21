@@ -6,6 +6,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.regex.Matcher;
 
@@ -85,22 +86,13 @@ public final class ConfigStore {
     }
 
     /**
-     * 按行拆分，行为对齐 Python 的 str.splitlines()：
-     * 兼容 \r\n、\n、\r；文件末尾的换行不会产生多余的空行。
+     * 按行拆分：兼容 \r\n、\n、\r；文件末尾的换行不会产生多余的空行。
      */
     private static List<String> splitLines(String content) {
-        List<String> lines = new ArrayList<>();
-        if (content.isEmpty()) {
-            return lines;
-        }
         String normalized = content.replace("\r\n", "\n").replace("\r", "\n");
-        String[] parts = normalized.split("\n", -1);
-        int n = parts.length;
-        if (n > 0 && parts[n - 1].isEmpty()) {
-            n--; // 去掉文件末尾换行产生的空行，与 Python splitlines() 一致
-        }
-        for (int i = 0; i < n; i++) {
-            lines.add(parts[i]);
+        List<String> lines = new ArrayList<>(Arrays.asList(normalized.split("\n", -1)));
+        if (!lines.isEmpty() && lines.get(lines.size() - 1).isEmpty()) {
+            lines.remove(lines.size() - 1);
         }
         return lines;
     }

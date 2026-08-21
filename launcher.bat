@@ -2,7 +2,6 @@
 rem ============================================
 rem  Template Filler Tool - launcher
 rem  Double click this file to run the tool.
-rem  Equivalent to the Python launcher "starter.bat".
 rem ============================================
 setlocal
 cd /d "%~dp0"

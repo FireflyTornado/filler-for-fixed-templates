@@ -6,12 +6,12 @@ import com.firefly.core.TemplateParser;
 import com.firefly.core.TemplateRenderer;
 import com.firefly.core.TextFileWriter;
 import com.firefly.core.ValueNormalizer;
+import com.firefly.ui.InputPanel;
 import com.firefly.ui.ResultPanel;
-import com.firefly.ui.StringInputPanel;
-import com.firefly.ui.VariableInputPanel;
 
 import javax.swing.BorderFactory;
 import javax.swing.JButton;
+import javax.swing.JComponent;
 import javax.swing.JFileChooser;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
@@ -44,7 +44,6 @@ import java.util.Map;
 
 /**
  * 主窗口：负责界面布局、事件处理和数据同步。
- * 对应 Python 原版的 TemplateApp 类。
  */
 public final class TemplateToolApp extends JFrame {
 
@@ -55,8 +54,8 @@ public final class TemplateToolApp extends JFrame {
 
     private JLabel configPathLabel;
     private JTextArea templateText;
-    private VariableInputPanel variablePanel;
-    private StringInputPanel stringPanel;
+    private InputPanel variablePanel;
+    private InputPanel stringPanel;
     private ResultPanel resultPanel;
     private JLabel statusLabel;
 
@@ -68,7 +67,7 @@ public final class TemplateToolApp extends JFrame {
         this.configStore = new ConfigStore(appDir);
         this.valuesStore = new LastValuesStore(appDir);
 
-        setSize(860, 900);
+        setSize(950, 1000);
         setMinimumSize(new java.awt.Dimension(660, 660));
         setDefaultCloseOperation(WindowConstants.DO_NOTHING_ON_CLOSE);
         addWindowListener(new WindowAdapter() {
@@ -93,12 +92,9 @@ public final class TemplateToolApp extends JFrame {
         GridBagConstraints gc = new GridBagConstraints();
         gc.gridx = 0;
         gc.insets = new Insets(6, 10, 6, 10);
+        gc.anchor = GridBagConstraints.WEST;
 
         // 顶栏：配置文件位置 + 打开/重新加载
-        gc.gridy = 0;
-        gc.weighty = 0;
-        gc.fill = GridBagConstraints.HORIZONTAL;
-        gc.anchor = GridBagConstraints.WEST;
         JPanel top = new JPanel(new BorderLayout(6, 0));
         JPanel topLeft = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
         topLeft.add(new JLabel("配置文件："));
@@ -112,13 +108,11 @@ public final class TemplateToolApp extends JFrame {
         topRight.add(reloadBtn);
         topRight.add(openBtn);
         top.add(topRight, BorderLayout.EAST);
-        root.add(top, gc);
+        addRow(gc, 0, 0, GridBagConstraints.HORIZONTAL, top);
         reloadBtn.addActionListener(e -> loadConfig());
         openBtn.addActionListener(e -> openConfigExternal());
 
         // 模板编辑区
-        gc.gridy = 1;
-        gc.fill = GridBagConstraints.HORIZONTAL;
         JPanel tpl = new JPanel(new BorderLayout(8, 4));
         tpl.setBorder(BorderFactory.createTitledBorder(
                 "模板内容（可直接在下方修改，点“保存模板”写入配置文件）"));
@@ -138,26 +132,19 @@ public final class TemplateToolApp extends JFrame {
         tplBottom.add(tplHint, BorderLayout.WEST);
         tplBottom.add(saveTplBtn, BorderLayout.EAST);
         tpl.add(tplBottom, BorderLayout.SOUTH);
-        root.add(tpl, gc);
+        addRow(gc, 1, 0, GridBagConstraints.HORIZONTAL, tpl);
         saveTplBtn.addActionListener(e -> saveTemplate());
 
         // 变量输入区
-        gc.gridy = 2;
-        gc.weighty = 1;
-        gc.fill = GridBagConstraints.BOTH;
-        variablePanel = new VariableInputPanel();
-        root.add(variablePanel, gc);
+        variablePanel = new InputPanel("变量值输入（留空按 0 处理）", false);
+        addRow(gc, 2, 1, GridBagConstraints.BOTH, variablePanel);
 
         // 字符串输入区
-        gc.gridy = 3;
-        gc.fill = GridBagConstraints.BOTH;
-        stringPanel = new StringInputPanel();
-        root.add(stringPanel, gc);
+        stringPanel = new InputPanel(
+                "字符串输入（内容原样输出到模板的 [[字符串]]，支持换行/空格/格式）", true);
+        addRow(gc, 3, 1, GridBagConstraints.BOTH, stringPanel);
 
         // 操作按钮
-        gc.gridy = 4;
-        gc.weighty = 0;
-        gc.fill = GridBagConstraints.HORIZONTAL;
         JPanel btnRow = new JPanel(new BorderLayout(6, 0));
         JPanel btns = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
         JButton genBtn = new JButton("生成结果");
@@ -170,27 +157,29 @@ public final class TemplateToolApp extends JFrame {
         btnNote.setForeground(Color.GRAY);
         btnRow.add(btns, BorderLayout.WEST);
         btnRow.add(btnNote, BorderLayout.EAST);
-        root.add(btnRow, gc);
+        addRow(gc, 4, 0, GridBagConstraints.HORIZONTAL, btnRow);
         genBtn.addActionListener(e -> generate());
         copyBtn.addActionListener(e -> copyResult());
         saveBtn.addActionListener(e -> saveResult());
 
         // 结果输出区
-        gc.gridy = 5;
-        gc.weighty = 1;
-        gc.fill = GridBagConstraints.BOTH;
         resultPanel = new ResultPanel();
-        root.add(resultPanel, gc);
+        addRow(gc, 5, 1, GridBagConstraints.BOTH, resultPanel);
 
         // 状态栏
-        gc.gridy = 6;
-        gc.weighty = 0;
-        gc.fill = GridBagConstraints.HORIZONTAL;
         statusLabel = new JLabel(" ");
         statusLabel.setBorder(BorderFactory.createCompoundBorder(
                 BorderFactory.createMatteBorder(1, 0, 0, 0, Color.LIGHT_GRAY),
                 BorderFactory.createEmptyBorder(4, 10, 4, 10)));
-        root.add(statusLabel, gc);
+        addRow(gc, 6, 0, GridBagConstraints.HORIZONTAL, statusLabel);
+    }
+
+    /** 一行固定属性（gridy/weighty/fill）的添加；gridx 恒为 0，anchor 已在启动时设定。 */
+    private void addRow(GridBagConstraints gc, int gridy, double weighty, int fill, JComponent comp) {
+        gc.gridy = gridy;
+        gc.weighty = weighty;
+        gc.fill = fill;
+        add(comp, gc);
     }
 
     // ---------- 数据同步 ----------
@@ -200,8 +189,7 @@ public final class TemplateToolApp extends JFrame {
         String content = templateText.getText();
         if (!content.equals(currentTemplate)) {
             currentTemplate = content;
-            rebuildVariableEntries(content);
-            rebuildStringEntries(content);
+            rebuildInputs(content);
         }
     }
 
@@ -220,8 +208,7 @@ public final class TemplateToolApp extends JFrame {
         }
         currentTemplate = template;
         templateText.setText(template);
-        rebuildVariableEntries(template);
-        rebuildStringEntries(template);
+        rebuildInputs(template);
     }
 
     private void saveTemplate() {
@@ -238,25 +225,17 @@ public final class TemplateToolApp extends JFrame {
                 JOptionPane.INFORMATION_MESSAGE);
     }
 
-    private void rebuildVariableEntries(String template) {
-        Map<String, String> current = variablePanel.getValues();
-        List<String> names = TemplateParser.collectInputVariables(template);
-        boolean hasAuto = !TemplateParser.extractAutoVariables(template).isEmpty();
-        variablePanel.rebuild(names, hasAuto, current, lastValues);
-    }
-
-    private void rebuildStringEntries(String template) {
-        Map<String, String> current = stringPanel.getValues();
-        List<String> names = TemplateParser.collectStringVariables(template);
-        stringPanel.rebuild(names, current, lastValues);
+    /** 按模板一次性重建变量/字符串输入框（尽量保留已有输入、用上次保存值回填）。 */
+    private void rebuildInputs(String template) {
+        TemplateParser.ParsedTemplate parsed = TemplateParser.parse(template);
+        variablePanel.rebuild(parsed.inputVariables(), !parsed.autoVariables().isEmpty(),
+                variablePanel.getValues(), lastValues);
+        stringPanel.rebuild(parsed.stringVariables(), stringPanel.getValues(), lastValues);
     }
 
     /** 收集当前所有输入的值（变量 + 字符串；字符串用 [[名字]] 作键避免冲突）。 */
     private Map<String, String> currentInputs() {
-        Map<String, String> data = new LinkedHashMap<>();
-        for (Map.Entry<String, String> e : variablePanel.getValues().entrySet()) {
-            data.put(e.getKey(), e.getValue());
-        }
+        Map<String, String> data = new LinkedHashMap<>(variablePanel.getValues());
         for (Map.Entry<String, String> e : stringPanel.getValues().entrySet()) {
             data.put("[[" + e.getKey() + "]]", e.getValue());
         }
@@ -277,8 +256,11 @@ public final class TemplateToolApp extends JFrame {
     private void generate() {
         syncTemplate();
         String template = currentTemplate;
-        List<String> names = TemplateParser.collectInputVariables(template);
-        List<String> autoNames = TemplateParser.extractAutoVariables(template);
+        TemplateParser.ParsedTemplate parsed = TemplateParser.parse(template);
+        List<String> names = parsed.inputVariables();
+        List<String> autoNames = parsed.autoVariables();
+        int exprCount = parsed.expressionCount();
+        List<String> strNames = parsed.stringVariables();
 
         LocalDate today = LocalDate.now();
         Map<String, String> values = new LinkedHashMap<>();
@@ -315,8 +297,6 @@ public final class TemplateToolApp extends JFrame {
         }
         resultPanel.setText(result.result());
 
-        int exprCount = TemplateParser.countExpressions(template);
-        List<String> strNames = TemplateParser.collectStringVariables(template);
         String msg;
         if (names.isEmpty() && autoNames.isEmpty() && strNames.isEmpty()) {
             msg = "生成成功：模板中没有变量，输出的是原文。";
@@ -349,23 +329,27 @@ public final class TemplateToolApp extends JFrame {
         return map;
     }
 
-    private void copyResult() {
-        String content = resultPanel.getText();
-        if (content.isEmpty()) {
+    /** 结果为空时弹出提示并返回 false，否则返回 true。 */
+    private boolean requireResult() {
+        if (resultPanel.getText().isEmpty()) {
             JOptionPane.showMessageDialog(this, "结果为空，请先点击“生成结果”。",
                     "提示", JOptionPane.INFORMATION_MESSAGE);
+            return false;
+        }
+        return true;
+    }
+
+    private void copyResult() {
+        if (!requireResult()) {
             return;
         }
         Clipboard clipboard = Toolkit.getDefaultToolkit().getSystemClipboard();
-        clipboard.setContents(new StringSelection(content), null);
+        clipboard.setContents(new StringSelection(resultPanel.getText()), null);
         setStatus("结果已复制到剪贴板。");
     }
 
     private void saveResult() {
-        String content = resultPanel.getText();
-        if (content.isEmpty()) {
-            JOptionPane.showMessageDialog(this, "结果为空，请先点击“生成结果”。",
-                    "提示", JOptionPane.INFORMATION_MESSAGE);
+        if (!requireResult()) {
             return;
         }
         JFileChooser chooser = new JFileChooser();
@@ -377,7 +361,7 @@ public final class TemplateToolApp extends JFrame {
         }
         File file = chooser.getSelectedFile();
         try {
-            TextFileWriter.writeText(file.toPath(), content);
+            TextFileWriter.writeText(file.toPath(), resultPanel.getText());
         } catch (IOException e) {
             JOptionPane.showMessageDialog(this, "无法写入文件：\n" + e,
                     "保存失败", JOptionPane.ERROR_MESSAGE);

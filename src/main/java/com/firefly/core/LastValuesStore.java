@@ -26,13 +26,7 @@ public final class LastValuesStore {
             return new LinkedHashMap<>();
         }
         try {
-            String text = TextFileWriter.readText(valuesFile);
-            Map<String, String> map = MiniJson.parseFlatStringMap(text);
-            Map<String, String> out = new LinkedHashMap<>();
-            for (Map.Entry<String, String> e : map.entrySet()) {
-                out.put(String.valueOf(e.getKey()), String.valueOf(e.getValue()));
-            }
-            return out;
+            return MiniJson.parseFlatStringMap(TextFileWriter.readText(valuesFile));
         } catch (Exception e) {
             return new LinkedHashMap<>(); // 文件损坏时忽略，重新开始
         }

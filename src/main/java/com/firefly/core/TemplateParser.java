@@ -30,76 +30,55 @@ public final class TemplateParser {
         return TemplateConstants.OPERATOR_RE.matcher(content).find();
     }
 
-    /** 返回需要用户填写的变量名（普通变量 + 表达式里引用的变量），按出现顺序去重。 */
-    public static List<String> collectInputVariables(String template) {
-        List<String> names = new ArrayList<>();
-        Set<String> seen = new LinkedHashSet<>();
-        Matcher m = TemplateConstants.PLACEHOLDER_RE.matcher(template);
+    /** 单次扫描模板得到的解析结果。 */
+    public record ParsedTemplate(List<String> inputVariables, List<String> autoVariables,
+                                 List<String> stringVariables, int expressionCount) {
+    }
+
+    /** 单次遍历模板：同时提取输入变量、自动日期变量、字符串变量，并统计表达式个数。 */
+    public static ParsedTemplate parse(String template) {
+        List<String> inputs = new ArrayList<>();
+        List<String> autos = new ArrayList<>();
+        List<String> strings = new ArrayList<>();
+        Set<String> seenInputs = new LinkedHashSet<>();
+        Set<String> seenAutos = new LinkedHashSet<>();
+        Set<String> seenStrings = new LinkedHashSet<>();
+        int exprCount = 0;
+
+        Matcher m = TemplateConstants.ALL_PLACEHOLDER_RE.matcher(template);
         while (m.find()) {
-            String content = m.group(1).trim();
+            if (m.group(2) != null) {                    // [[字符串]]
+                String content = m.group(2).substring(2, m.group(2).length() - 2).trim();
+                if (!content.isEmpty() && !seenStrings.contains(content)) {
+                    seenStrings.add(content);
+                    strings.add(content);
+                }
+                continue;
+            }
+            String content = m.group(1).substring(2, m.group(1).length() - 2).trim();
             if (content.isEmpty() || isNumber(content)) {
                 continue;
             }
             if (isExpression(content)) {
+                exprCount++;
                 Matcher im = TemplateConstants.IDENT_RE.matcher(content);
                 while (im.find()) {
                     String name = im.group();
-                    if (!TemplateConstants.AUTO_VAR_SET.contains(name) && !seen.contains(name)) {
-                        seen.add(name);
-                        names.add(name);
+                    if (!TemplateConstants.AUTO_VAR_SET.contains(name) && !seenInputs.contains(name)) {
+                        seenInputs.add(name);
+                        inputs.add(name);
                     }
                 }
-            } else {
-                if (!TemplateConstants.AUTO_VAR_SET.contains(content) && !seen.contains(content)) {
-                    seen.add(content);
-                    names.add(content);
+            } else if (TemplateConstants.AUTO_VAR_SET.contains(content)) {
+                if (!seenAutos.contains(content)) {
+                    seenAutos.add(content);
+                    autos.add(content);
                 }
+            } else if (!seenInputs.contains(content)) {
+                seenInputs.add(content);
+                inputs.add(content);
             }
         }
-        return names;
-    }
-
-    /** 返回模板中出现的自动日期变量（{{今日…}}/{{昨日…}}），按出现顺序去重。 */
-    public static List<String> extractAutoVariables(String template) {
-        List<String> names = new ArrayList<>();
-        Set<String> seen = new LinkedHashSet<>();
-        Matcher m = TemplateConstants.PLACEHOLDER_RE.matcher(template);
-        while (m.find()) {
-            String content = m.group(1).trim();
-            if (!isExpression(content)
-                    && TemplateConstants.AUTO_VAR_SET.contains(content)
-                    && !seen.contains(content)) {
-                seen.add(content);
-                names.add(content);
-            }
-        }
-        return names;
-    }
-
-    /** 返回模板中出现的字符串变量（[[字符串]]），按出现顺序去重。 */
-    public static List<String> collectStringVariables(String template) {
-        List<String> names = new ArrayList<>();
-        Set<String> seen = new LinkedHashSet<>();
-        Matcher m = TemplateConstants.STRING_RE.matcher(template);
-        while (m.find()) {
-            String content = m.group(1).trim();
-            if (!content.isEmpty() && !seen.contains(content)) {
-                seen.add(content);
-                names.add(content);
-            }
-        }
-        return names;
-    }
-
-    /** 统计模板中表达式占位符的个数（如 {{数量*单价}}）。 */
-    public static int countExpressions(String template) {
-        int n = 0;
-        Matcher m = TemplateConstants.PLACEHOLDER_RE.matcher(template);
-        while (m.find()) {
-            if (isExpression(m.group(1).trim())) {
-                n++;
-            }
-        }
-        return n;
+        return new ParsedTemplate(inputs, autos, strings, exprCount);
     }
 }

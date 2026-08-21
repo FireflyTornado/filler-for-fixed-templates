@@ -4,19 +4,16 @@ import com.firefly.TemplateConstants;
 
 import java.util.Map;
 import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
  * 安全的算术表达式求值（支持 + - * / ** 和括号，变量名可含中文）。
  * 规则：
  *   * 先正则提取变量名并替换成用户输入的数字（空值按 0）
- *   * 替换结果必须只能包含数字、运算符、括号和小数点，否则拒绝
- *   * 用自写的递归下降解析器求值，不依赖任何动态求值能力
+ *   * 用自写的递归下降解析器逐字符解析求值，无法识别的部分会报错，不依赖任何动态求值能力
  */
 public final class ExpressionEvaluator {
 
-    /** 替换完变量后，表达式中只允许出现这些字符 */
-    private static final Pattern ALLOWED_CHARS = Pattern.compile("[\\d+\\-*/().\\s]*");
+    private static final String BAD_PART_MSG = "包含无法识别的部分。";
 
     private ExpressionEvaluator() {
     }
@@ -37,9 +34,6 @@ public final class ExpressionEvaluator {
      */
     public static double evaluate(String expr, Map<String, String> values) throws EvalException {
         String substituted = substituteIdentifiers(expr, values);
-        if (!ALLOWED_CHARS.matcher(substituted).matches()) {
-            throw new EvalException("包含无法识别的部分。");
-        }
         try {
             Parser parser = new Parser(substituted);
             double result = parser.parse();
@@ -86,7 +80,7 @@ public final class ExpressionEvaluator {
      *   expression -> term ((+|-) term)*
      *   term       -> factor ((*|/) factor)*
      *   factor     -> (+|-) factor | power
-     *   power      -> atom (** power)?    （右结合，与 Python ** 一致）
+     *   power      -> atom (** power)?    （右结合）
      *   atom       -> number | ( expression )
      */
     private static final class Parser {
@@ -101,7 +95,7 @@ public final class ExpressionEvaluator {
             double v = parseExpression();
             skipWs();
             if (pos < s.length()) {
-                throw new EvalException("包含无法识别的部分。");
+                throw new EvalException(BAD_PART_MSG);
             }
             return v;
         }
@@ -146,7 +140,7 @@ public final class ExpressionEvaluator {
         private double parseFactor() throws EvalException {
             skipWs();
             if (pos >= s.length()) {
-                throw new EvalException("包含无法识别的部分。");
+                throw new EvalException(BAD_PART_MSG);
             }
             char c = s.charAt(pos);
             if (c == '+' || c == '-') {
@@ -171,7 +165,7 @@ public final class ExpressionEvaluator {
         private double parseAtom() throws EvalException {
             skipWs();
             if (pos >= s.length()) {
-                throw new EvalException("包含无法识别的部分。");
+                throw new EvalException(BAD_PART_MSG);
             }
             char c = s.charAt(pos);
             if (c == '(') {
@@ -179,7 +173,7 @@ public final class ExpressionEvaluator {
                 double v = parseExpression();
                 skipWs();
                 if (pos >= s.length() || s.charAt(pos) != ')') {
-                    throw new EvalException("包含无法识别的部分。");
+                    throw new EvalException(BAD_PART_MSG);
                 }
                 pos++;
                 return v;
@@ -187,7 +181,7 @@ public final class ExpressionEvaluator {
             if (Character.isDigit(c) || c == '.') {
                 return parseNumber();
             }
-            throw new EvalException("包含无法识别的部分。");
+            throw new EvalException(BAD_PART_MSG);
         }
 
         /** 解析数字：整数 / 小数 / 科学计数法，如 5、3.5、.5、2e3、1.5E-2。 */
@@ -221,12 +215,12 @@ public final class ExpressionEvaluator {
             }
             String numStr = s.substring(start, pos);
             if (numStr.isEmpty() || ".".equals(numStr)) {
-                throw new EvalException("包含无法识别的部分。");
+                throw new EvalException(BAD_PART_MSG);
             }
             try {
                 return Double.parseDouble(numStr);
             } catch (NumberFormatException e) {
-                throw new EvalException("包含无法识别的部分。");
+                throw new EvalException(BAD_PART_MSG);
             }
         }
 
