@@ -17,7 +17,7 @@ manifest.tmp
 
 # ---- 运行期状态----
 last_values.json
-template.conf
+Templates/
 
 # ---- 日志 ----
 *.log

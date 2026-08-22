@@ -1,9 +1,9 @@
 package com.firefly;
 
-import com.firefly.core.ConfigStore;
 import com.firefly.core.LastValuesStore;
 import com.firefly.core.TemplateParser;
 import com.firefly.core.TemplateRenderer;
+import com.firefly.core.TemplateStore;
 import com.firefly.core.TextFileWriter;
 import com.firefly.core.ValueNormalizer;
 import com.firefly.ui.InputPanel;
@@ -35,7 +35,9 @@ import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -49,22 +51,24 @@ public final class TemplateToolApp extends JFrame {
 
     private static final Font UI_FONT = new Font("Microsoft YaHei UI", Font.PLAIN, 12);
 
-    private final ConfigStore configStore;
+    private final TemplateStore templateStore;
     private final LastValuesStore valuesStore;
 
-    private JLabel configPathLabel;
+    private JLabel templateNameLabel;
     private JTextArea templateText;
     private InputPanel variablePanel;
     private InputPanel stringPanel;
     private ResultPanel resultPanel;
     private JLabel statusLabel;
 
+    private String currentTemplateName = "";      // 当前使用的模板文件名
     private String currentTemplate = "";          // 上一次同步过输入框的模板
-    private Map<String, String> lastValues = new LinkedHashMap<>();
+    private String lastDiskContent = "";          // 当前模板文件在磁盘上的内容（判断是否有未保存修改）
+    private Map<String, String> currentValues = new LinkedHashMap<>(); // 当前模板上次保存的输入（用于回填）
 
     public TemplateToolApp(Path appDir) {
         super("模板填充工具");
-        this.configStore = new ConfigStore(appDir);
+        this.templateStore = new TemplateStore(appDir);
         this.valuesStore = new LastValuesStore(appDir);
 
         setSize(950, 1000);
@@ -78,9 +82,8 @@ public final class TemplateToolApp extends JFrame {
             }
         });
 
-        this.lastValues = valuesStore.load();     // 在重建输入框之前载入
         buildUi();
-        loadConfig();
+        initTemplates();
         setLocationRelativeTo(null);               // 窗口居中
     }
 
@@ -94,28 +97,34 @@ public final class TemplateToolApp extends JFrame {
         gc.insets = new Insets(6, 10, 6, 10);
         gc.anchor = GridBagConstraints.WEST;
 
-        // 顶栏：配置文件位置 + 打开/重新加载
+        // 顶栏：当前模板文件 + 选择/新建/保存/打开文件夹
         JPanel top = new JPanel(new BorderLayout(6, 0));
-        JPanel topLeft = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
-        topLeft.add(new JLabel("配置文件："));
-        configPathLabel = new JLabel(configStore.configFile().toString());
-        configPathLabel.setForeground(Color.GRAY);
-        topLeft.add(configPathLabel);
+        JPanel topLeft = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
+        topLeft.add(new JLabel("模板文件："));
+        templateNameLabel = new JLabel("—");
+        templateNameLabel.setForeground(Color.GRAY);
+        topLeft.add(templateNameLabel);
         top.add(topLeft, BorderLayout.WEST);
         JPanel topRight = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
-        JButton reloadBtn = new JButton("重新加载");
-        JButton openBtn = new JButton("用系统编辑器打开");
-        topRight.add(reloadBtn);
-        topRight.add(openBtn);
+        JButton chooseBtn = new JButton("选择模板文件…");
+        JButton newBtn = new JButton("新建模板");
+        JButton saveTplBtn = new JButton("保存模板");
+        JButton openDirBtn = new JButton("打开文件夹");
+        topRight.add(chooseBtn);
+        topRight.add(newBtn);
+        topRight.add(saveTplBtn);
+        topRight.add(openDirBtn);
         top.add(topRight, BorderLayout.EAST);
         addRow(gc, 0, 0, GridBagConstraints.HORIZONTAL, top);
-        reloadBtn.addActionListener(e -> loadConfig());
-        openBtn.addActionListener(e -> openConfigExternal());
+        chooseBtn.addActionListener(e -> chooseTemplate());
+        newBtn.addActionListener(e -> newTemplate());
+        saveTplBtn.addActionListener(e -> saveTemplate());
+        openDirBtn.addActionListener(e -> openTemplatesFolder());
 
         // 模板编辑区
         JPanel tpl = new JPanel(new BorderLayout(8, 4));
         tpl.setBorder(BorderFactory.createTitledBorder(
-                "模板内容（可直接在下方修改，点“保存模板”写入配置文件）"));
+                "模板内容（可直接在下方修改，点“保存模板”写回当前模板文件）"));
         templateText = new JTextArea(5, 40);
         templateText.setFont(UI_FONT);
         templateText.setLineWrap(true);
@@ -125,15 +134,12 @@ public final class TemplateToolApp extends JFrame {
         tpl.add(tplScroll, BorderLayout.CENTER);
         JPanel tplBottom = new JPanel(new BorderLayout(4, 0));
         tplBottom.setBorder(BorderFactory.createEmptyBorder(4, 8, 8, 8));
-        JButton saveTplBtn = new JButton("保存模板");
         JLabel tplHint = new JLabel(
                 "提示：数字用{{变量名}}，支持运算符{{变量1*变量2}}；日期变量用{{今日年月日}}/{{昨日年月日}}；字符串用[[字符串]]");
         tplHint.setForeground(Color.GRAY);
         tplBottom.add(tplHint, BorderLayout.WEST);
-        tplBottom.add(saveTplBtn, BorderLayout.EAST);
         tpl.add(tplBottom, BorderLayout.SOUTH);
         addRow(gc, 1, 0, GridBagConstraints.HORIZONTAL, tpl);
-        saveTplBtn.addActionListener(e -> saveTemplate());
 
         // 变量输入区
         variablePanel = new InputPanel("变量值输入（留空按 0 处理）", false);
@@ -193,44 +199,222 @@ public final class TemplateToolApp extends JFrame {
         }
     }
 
-    private void loadConfig() {
+    // ---------- 模板文件管理 ----------
+
+    /** 启动初始化：确保 Templates 目录有模板，然后加载上次使用的模板（没有则取第一个）。 */
+    private void initTemplates() {
         try {
-            configStore.ensureDefaultConfig();
+            templateStore.ensureTemplatesExist();
         } catch (IOException e) {
-            // 忽略：配置目录可能不可写，后续读取/保存再报错
+            JOptionPane.showMessageDialog(this, "无法初始化模板文件夹：\n" + e,
+                    "错误", JOptionPane.ERROR_MESSAGE);
+            setStatus("无法初始化模板文件夹。");
+            return;
         }
-        String template = configStore.readTemplate();
-        if (template == null) {
-            template = "";
-            setStatus("配置里没有找到 template 行，模板为空。");
-        } else {
-            setStatus("配置已加载：" + configStore.configFile());
+        List<String> names = templateStore.listTemplateNames();
+        String lastUsed = valuesStore.loadLastTemplate();
+        String toLoad = (lastUsed != null && names.contains(lastUsed))
+                ? lastUsed
+                : (names.isEmpty() ? null : names.get(0));
+        if (toLoad == null) {
+            setStatus("Templates 文件夹为空，无法加载模板。");
+            return;
         }
-        currentTemplate = template;
-        templateText.setText(template);
-        rebuildInputs(template);
+        loadTemplate(toLoad);
     }
 
+    /** 把指定模板文件的内容加载到编辑框，并作为当前模板；切换前先把上一个模板的输入存起来。 */
+    private void loadTemplate(String name) {
+        saveLastInputs();                        // 切换模板前，把当前输入存回当前模板
+        String content;
+        try {
+            content = templateStore.readTemplate(name);
+        } catch (IOException e) {
+            JOptionPane.showMessageDialog(this, "无法读取模板文件：\n" + e,
+                    "读取失败", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+        currentTemplateName = name;
+        currentTemplate = content;
+        lastDiskContent = content;
+        templateText.setText(content);
+        templateNameLabel.setText(name);
+        currentValues = valuesStore.loadFor(name);   // 读该模板上次的输入，用于回填
+        rebuildInputs(content, true);
+        rememberTemplate(name);
+        setStatus("已加载模板：" + name);
+    }
+
+    /** 「选择模板文件…」：从 Templates 文件夹选一个模板加载；目录外的文件先导入文件夹。 */
+    private void chooseTemplate() {
+        File dir = templateStore.templatesDir().toFile();
+        if (!dir.exists()) {
+            dir.mkdirs();
+        }
+        JFileChooser chooser = new JFileChooser();
+        chooser.setFileSelectionMode(JFileChooser.FILES_ONLY);
+        chooser.setCurrentDirectory(dir);
+        chooser.setDialogTitle("选择模板文件（Templates 文件夹）");
+        if (chooser.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) {
+            return;
+        }
+        File selected = chooser.getSelectedFile();
+        File target = selected;
+        Path templatesDir = templateStore.templatesDir();
+        try {
+            if (!selected.getParentFile().toPath().toAbsolutePath().normalize()
+                    .equals(templatesDir.toAbsolutePath().normalize())) {
+                // 选中的是目录外的文件：先复制进 Templates 文件夹再使用
+                target = new File(dir, selected.getName());
+                Files.copy(selected.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING);
+                setStatus("已从外部导入模板：" + selected.getName());
+            }
+        } catch (IOException e) {
+            JOptionPane.showMessageDialog(this, "无法导入模板文件：\n" + e,
+                    "导入失败", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+        if (!confirmDiscardUnsaved()) {
+            return;
+        }
+        loadTemplate(target.getName());
+    }
+
+    /** 「新建模板」：输入任意名字，清空编辑框等待写入；文件在首次「保存模板」时创建。 */
+    private void newTemplate() {
+        if (!confirmDiscardUnsaved()) {
+            return;
+        }
+        String name = JOptionPane.showInputDialog(this,
+                "请输入新模板文件名（存放在 Templates 文件夹内，可任意命名）：",
+                "新建模板", JOptionPane.PLAIN_MESSAGE);
+        if (name == null) {
+            return;
+        }
+        name = name.trim();
+        if (!isValidTemplateName(name)) {
+            JOptionPane.showMessageDialog(this,
+                    "文件名不能为空，且不能包含 \\ / : * ? \" < > | 等字符，也不能以 . 开头。",
+                    "文件名不合法", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+        if (!name.contains(".")) {
+            name = name + ".txt";               // 统一模板扩展名
+        }
+        if (templateStore.listTemplateNames().contains(name)) {
+            loadTemplate(name);
+            setStatus("该模板已存在，已为你打开：" + name);
+            return;
+        }
+        currentTemplateName = name;
+        currentTemplate = "";
+        lastDiskContent = "";
+        currentValues = new LinkedHashMap<>();
+        templateText.setText("");
+        templateNameLabel.setText(name);
+        rebuildInputs("");
+        rememberTemplate(name);
+        setStatus("新模板 " + name + " 尚未保存，请在下方输入内容后点“保存模板”。");
+    }
+
+    /** 「保存模板」：把编辑框内容写回当前模板文件（不存在则新建）。 */
     private void saveTemplate() {
         syncTemplate();
+        String name = currentTemplateName;
+        if (name.isEmpty()) {
+            JOptionPane.showMessageDialog(this, "当前没有选中的模板文件。",
+                    "提示", JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
         try {
-            configStore.writeTemplate(currentTemplate);
+            templateStore.writeTemplate(name, currentTemplate);
+            lastDiskContent = currentTemplate;
         } catch (IOException e) {
-            JOptionPane.showMessageDialog(this, "无法写入配置文件：\n" + e,
+            JOptionPane.showMessageDialog(this, "无法写入模板文件：\n" + e,
                     "保存失败", JOptionPane.ERROR_MESSAGE);
             return;
         }
-        setStatus("模板已保存到配置文件。");
-        JOptionPane.showMessageDialog(this, "模板已保存到配置文件。", "已保存",
+        rememberTemplate(name);
+        Path file = templateStore.templateFile(name);
+        setStatus("模板已保存到：" + file);
+        JOptionPane.showMessageDialog(this, "模板已保存到：" + file, "已保存",
                 JOptionPane.INFORMATION_MESSAGE);
     }
 
-    /** 按模板一次性重建变量/字符串输入框（尽量保留已有输入、用上次保存值回填）。 */
+    /** 「打开文件夹」：用系统文件管理器打开 Templates 文件夹。 */
+    private void openTemplatesFolder() {
+        File dir = templateStore.templatesDir().toFile();
+        if (!dir.exists()) {
+            dir.mkdirs();
+        }
+        try {
+            if (Desktop.isDesktopSupported()) {
+                Desktop.getDesktop().open(dir);
+                return;
+            }
+            throw new IOException("Desktop 不可用");
+        } catch (Exception e) {
+            // 打开失败时回退到 Windows 资源管理器
+            try {
+                String os = System.getProperty("os.name", "").toLowerCase();
+                if (os.contains("win")) {
+                    new ProcessBuilder("explorer.exe", dir.getAbsolutePath()).start();
+                } else if (os.contains("mac")) {
+                    new ProcessBuilder("open", dir.getAbsolutePath()).start();
+                } else {
+                    new ProcessBuilder("xdg-open", dir.getAbsolutePath()).start();
+                }
+            } catch (Exception e2) {
+                JOptionPane.showMessageDialog(this, "无法打开模板文件夹：\n" + e2,
+                        "无法打开", JOptionPane.ERROR_MESSAGE);
+            }
+        }
+    }
+
+    /** 编辑框内容与磁盘不一致（有未保存修改）时询问是否丢弃；无修改直接返回 true。 */
+    private boolean confirmDiscardUnsaved() {
+        if (templateText.getText().equals(lastDiskContent)) {
+            return true;
+        }
+        return JOptionPane.showConfirmDialog(this,
+                "当前模板有未保存的修改，继续操作将丢弃这些修改。是否继续？",
+                "未保存的修改", JOptionPane.YES_NO_OPTION) == JOptionPane.YES_OPTION;
+    }
+
+    /** 记住当前使用的模板文件名（写进 last_values.json，下次启动恢复）。 */
+    private void rememberTemplate(String name) {
+        if (name == null || name.isEmpty()) {
+            return;
+        }
+        valuesStore.saveLastTemplate(name);
+    }
+
+    /** 新模板文件名校验：非空、不以 . 开头（避免隐藏文件），且不能包含路径分隔符等非法字符。 */
+    private static boolean isValidTemplateName(String name) {
+        if (name.isEmpty() || name.startsWith(".") || name.equals(".") || name.equals("..")) {
+            return false;
+        }
+        for (char c : name.toCharArray()) {
+            if ("\\/:*?\"<>|".indexOf(c) >= 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** 按模板一次性重建变量/字符串输入框（尽量保留已有输入、用该模板上次保存的值回填）。 */
     private void rebuildInputs(String template) {
+        rebuildInputs(template, false);
+    }
+
+    /** fresh=true 时忽略当前输入框里的旧值，直接用该模板上次保存的值回填（用于切换模板）。 */
+    private void rebuildInputs(String template, boolean fresh) {
         TemplateParser.ParsedTemplate parsed = TemplateParser.parse(template);
+        Map<String, String> currentVars = fresh ? Map.of() : variablePanel.getValues();
+        Map<String, String> currentStrs = fresh ? Map.of() : stringPanel.getValues();
         variablePanel.rebuild(parsed.inputVariables(), !parsed.autoVariables().isEmpty(),
-                variablePanel.getValues(), lastValues);
-        stringPanel.rebuild(parsed.stringVariables(), stringPanel.getValues(), lastValues);
+                currentVars, currentValues);
+        stringPanel.rebuild(parsed.stringVariables(), currentStrs, currentValues);
     }
 
     /** 收集当前所有输入的值（变量 + 字符串；字符串用 [[名字]] 作键避免冲突）。 */
@@ -242,10 +426,12 @@ public final class TemplateToolApp extends JFrame {
         return data;
     }
 
+    /** 把当前输入存到当前模板名下（模板名空则跳过）。 */
     private void saveLastInputs() {
         try {
-            lastValues = currentInputs();
-            valuesStore.save(lastValues);
+            if (!currentTemplateName.isEmpty()) {
+                valuesStore.saveFor(currentTemplateName, currentInputs());
+            }
         } catch (Exception e) {
             // 忽略：存档失败不影响主流程
         }
@@ -360,6 +546,9 @@ public final class TemplateToolApp extends JFrame {
             return;
         }
         File file = chooser.getSelectedFile();
+        if (file.getName().indexOf('.') < 0) {
+            file = new File(file.getParentFile(), file.getName() + ".txt");   // 统一扩展名
+        }
         try {
             TextFileWriter.writeText(file.toPath(), resultPanel.getText());
         } catch (IOException e) {
@@ -368,41 +557,6 @@ public final class TemplateToolApp extends JFrame {
             return;
         }
         setStatus("结果已保存到：" + file.getAbsolutePath());
-    }
-
-    private void openConfigExternal() {
-        try {
-            configStore.ensureDefaultConfig();
-        } catch (IOException e) {
-            JOptionPane.showMessageDialog(this, "无法打开配置文件：\n" + e,
-                    "无法打开", JOptionPane.ERROR_MESSAGE);
-            return;
-        }
-        File config = configStore.configFile().toFile();
-        try {
-            if (Desktop.isDesktopSupported()) {
-                Desktop.getDesktop().open(config);
-            } else {
-                throw new IOException("Desktop 不可用");
-            }
-        } catch (Exception e) {
-            // Desktop 打开失败时回退到系统自带的文本编辑器
-            try {
-                String os = System.getProperty("os.name", "").toLowerCase();
-                if (os.contains("win")) {
-                    new ProcessBuilder("notepad.exe", config.getAbsolutePath()).start();
-                } else if (os.contains("mac")) {
-                    new ProcessBuilder("open", config.getAbsolutePath()).start();
-                } else {
-                    new ProcessBuilder("xdg-open", config.getAbsolutePath()).start();
-                }
-            } catch (Exception e2) {
-                JOptionPane.showMessageDialog(this, "无法打开配置文件：\n" + e2,
-                        "无法打开", JOptionPane.ERROR_MESSAGE);
-                return;
-            }
-        }
-        setStatus("已在系统编辑器中打开配置文件，修改保存后点“重新加载”。");
     }
 
     private void setStatus(String text) {

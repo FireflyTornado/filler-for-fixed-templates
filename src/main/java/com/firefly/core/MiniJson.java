@@ -5,7 +5,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * 极简 JSON 读写，只用于 last_values.json 这种「扁平字符串键值对」结构，
+ * 极简 JSON 读写，只用于 last_values.json 这种「模板名 → 扁平字符串键值对」的嵌套结构，
  * 避免引入第三方 JSON 依赖。
  */
 public final class MiniJson {
@@ -13,29 +13,69 @@ public final class MiniJson {
     private MiniJson() {
     }
 
-    /** 把一个扁平字符串映射序列化成 JSON（带缩进）。 */
-    public static String toJson(Map<String, String> map) {
+    /** 把一个「外层键 → 内层扁平字符串映射」序列化成 JSON（带缩进）。 */
+    public static String toJsonNested(Map<String, Map<String, String>> nested) {
         StringBuilder sb = new StringBuilder("{\n");
         boolean first = true;
-        for (Map.Entry<String, String> e : map.entrySet()) {
+        for (Map.Entry<String, Map<String, String>> e : nested.entrySet()) {
             if (!first) {
                 sb.append(",\n");
             }
             first = false;
-            sb.append("  ").append(quote(e.getKey())).append(": ").append(quote(e.getValue()));
+            sb.append("  ").append(quote(e.getKey())).append(": {\n");
+            boolean firstInner = true;
+            for (Map.Entry<String, String> ie : e.getValue().entrySet()) {
+                if (!firstInner) {
+                    sb.append(",\n");
+                }
+                firstInner = false;
+                sb.append("    ").append(quote(ie.getKey())).append(": ").append(quote(ie.getValue()));
+            }
+            sb.append("\n  }");
         }
         sb.append("\n}");
         return sb.toString();
     }
 
-    /** 解析扁平字符串映射；值也可以是数字 / true / false / null（转成字符串）。 */
-    public static Map<String, String> parseFlatStringMap(String json) throws IOException {
+    /** 解析嵌套字符串映射；值也可以是数字 / true / false / null（转成字符串）。 */
+    public static Map<String, Map<String, String>> parseNestedStringMap(String json) throws IOException {
         Parser p = new Parser(json);
+        Map<String, Map<String, String>> nested = new LinkedHashMap<>();
+        p.skipWs();
+        p.expect('{');
+        p.skipWs();
+        if (p.peek() == '}') {
+            p.next();
+            return nested;
+        }
+        while (true) {
+            p.skipWs();
+            String outerKey = p.parseString();
+            p.skipWs();
+            p.expect(':');
+            p.skipWs();
+            nested.put(outerKey, parseMapBody(p));
+            p.skipWs();
+            char c = p.next();
+            if (c == ',') {
+                continue;
+            }
+            if (c == '}') {
+                break;
+            }
+            throw new IOException("JSON 格式错误：意外的字符 '" + c + "'");
+        }
+        return nested;
+    }
+
+    /** 解析一个扁平映射对象（{...}，首尾花括号一并消费）。 */
+    private static Map<String, String> parseMapBody(Parser p) throws IOException {
         Map<String, String> map = new LinkedHashMap<>();
         p.skipWs();
         p.expect('{');
         p.skipWs();
         if (p.peek() == '}') {
+            p.next();
             return map;
         }
         while (true) {

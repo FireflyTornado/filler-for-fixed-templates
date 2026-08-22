@@ -11,10 +11,14 @@ public final class TemplateConstants {
     private TemplateConstants() {
     }
 
-    /** 配置文件 / 结果文件 / 上次输入存档 的文件名 */
-    public static final String CONFIG_FILENAME = "template.conf";
+    /** 结果文件 / 上次输入存档 的文件名 */
     public static final String RESULT_FILENAME = "result.txt";
     public static final String VALUES_FILENAME = "last_values.json";
+
+    /** 模板文件夹名 / 示例模板文件名 / 记忆上次使用的模板时写入 last_values.json 的保留键 */
+    public static final String TEMPLATES_DIR_NAME = "Templates";
+    public static final String EXAMPLE_TEMPLATE_NAME = "example.txt";
+    public static final String LAST_TEMPLATE_KEY = "@@last_template@@";
 
     /** 自动日期：出现在模板中时，由系统日期自动填充，无需手动输入。
      *  今日… 取当天日期；昨日… 取前一天日期。 */
@@ -36,28 +40,12 @@ public final class TemplateConstants {
             Pattern.compile("(?<![\\p{L}\\p{Nd}_])[\\p{L}\\p{M}][\\p{L}\\p{M}\\p{Nd}_]*");
     /** 判断一个占位符内容是否为算术表达式（含 + - * / 或括号） */
     public static final Pattern OPERATOR_RE = Pattern.compile("[+\\-*/()]");
-    /** 识别配置文件中 “template = ...” 这一行 */
-    public static final Pattern TPL_LINE =
-            Pattern.compile("^\\s*template\\s*=\\s*(.*)$", Pattern.CASE_INSENSITIVE);
 
     /**
-     * 默认配置（配置文件不存在时自动生成）。
-     * 注意：模板里的 \n 按规则写成两个字符「\n」，读取时再还原成真实换行，
-     * 这样默认示例也与文档规则一致。
+     * 默认示例模板（Templates 文件夹为空时自动生成 example.txt）。
+     * 使用真实换行（模板文件是纯文本）；演示数字变量、算术表达式、日期变量与字符串。
      */
-    public static final String DEFAULT_CONFIG =
-            "# ==================================================\n"
-            + "# 模板填充工具 —— 配置文件\n"
-            + "# --------------------------------------------------\n"
-            + "# 修改下面 template 一行的内容，即可更换模板。\n"
-            + "# 规则：\n"
-            + "#   * 用 {{变量名}} 在模板中标注占位符\n"
-            + "#   * 打开工具后，会为每个变量自动生成一个输入框\n"
-            + "#   * 输入留空时按 0 处理；输入非数字会给出友好提示\n"
-            + "#   * {{今日年}}、{{今日年月}}、{{今日年月日}} 自动取当天日期；{{昨日年}}、{{昨日年月}}、{{昨日年月日}} 自动取前一天日期，均无需输入\n"
-            + "#   * 支持算术表达式，如 {{数量*单价}}，结果保留两位小数\n"
-            + "#   * 用 [[字符串名]] 标注字符串占位符，输入内容原样输出（含换行、空格、格式）\n"
-            + "#   * 模板需要换行时，请使用 \\n\n"
-            + "# ==================================================\n"
-            + "template = {{今日年月日}} 客户编号 {{编号}}：购买 {{数量}} 件，单价 {{单价}} 元，应付 {{金额}} 元。\\n备注：[[备注]]\n";
+    public static final String DEFAULT_TEMPLATE =
+            "{{今日年月日}} 客户编号 {{编号}}：购买 {{数量}} 件，单价 {{单价}} 元，应付 {{数量*单价}} 元。\n"
+            + "备注：[[备注]]\n";
 }

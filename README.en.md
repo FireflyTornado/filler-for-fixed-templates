@@ -10,8 +10,9 @@ A lightweight desktop utility built with Java Swing: it fills a fixed template w
 - **Add free-form strings** → `[[string]]` uses a large text input; the content is output verbatim (line breaks, spaces, and formatting preserved)
 - **Expression support** → e.g. `{{var1/var2}}`, supporting `+ - * / **` and parentheses, with results rounded to two decimal places
 - **Automatic dates** → `{{todayYear}}`, `{{todayYearMonth}}`, `{{todayYearMonthDay}}` pull today's system date automatically; `{{yesterdayYear}}`, `{{yesterdayYearMonth}}`, `{{yesterdayYearMonthDay}}` pull yesterday's date
-- **Remembers your last input** → Previously entered values are saved to `last_values.json` and restored the next time you open the tool
-- **Edit templates on the fly** → Modify and save directly in the UI, or open `template.conf` with your system editor
+- **Remembers your last input** → Values are remembered per template in `last_values.json` and auto-filled when that template is opened
+- **Multiple templates** → Template files with arbitrary names live in the `Templates/` folder; pick one via "Select Template…", create new ones, save edits back to the corresponding file, and the last-used template is restored on next launch
+- **Edit templates on the fly** → Modify and save directly in the UI, or open the `Templates/` folder and edit with your system editor
 
 ## Quick Start
 
@@ -22,7 +23,7 @@ A lightweight desktop utility built with Java Swing: it fills a fixed template w
 1. Double-click `launcher.bat`
 2. Run `java -jar TemplateTool.jar` from the command line
 
-**Modify the template**: Open `template.conf` and edit the `template =` value (you can also edit it directly in the UI, then click "Save Template").
+**Modify the template**: Templates are plain-text files with arbitrary names inside the `Templates/` folder (real line breaks). Click "Select Template…" to pick the one to use, edit it in the box below, then click "Save Template" to write it back; "New Template" creates a new file; "Open Folder" lets you edit with an external editor.
 
 ## Placeholder Syntax
 
@@ -33,7 +34,7 @@ A lightweight desktop utility built with Java Swing: it fills a fixed template w
 | `{{todayYear}} {{todayYearMonth}} {{todayYearMonthDay}}` | Auto-fetched today's date variables | `{{todayYearMonthDay}}` |
 | `{{yesterdayYear}} {{yesterdayYearMonth}} {{yesterdayYearMonthDay}}` | Auto-fetched yesterday's date variables | `{{yesterdayYearMonthDay}}` |
 | `[[stringName]]` | Multi-line text, output verbatim | `[[notes]]` |
-| `\n` | Line break in the template | `First line\nSecond line` |
+| Enter | Line break in the template | Templates are plain text, just press Enter |
 
 ## Build
 
@@ -50,16 +51,16 @@ Building requires a JDK (with `javac` and `jar`). On success, `TemplateTool.jar`
 ```
 ├── build.bat               # Compiles sources and packages TemplateTool.jar (auto-detects JDK)
 ├── launcher.bat            # One-click launcher (auto-detects java)
-├── template.conf           # Template configuration file (auto-generated with defaults on first run if missing)
-├── last_values.json        # Memory file for your last input (auto-generated after each use)
+├── Templates/              # Template files folder (arbitrary names; example.txt auto-created on first run)
+├── last_values.json        # Per-template input memory + last-used template (auto-generated after each use)
 └── src/main/java/com/firefly/
     ├── Main.java                 # Program entry point: high-DPI / system look-and-feel, starts the main window
     ├── TemplateToolApp.java      # Main window: layout, event handling, data sync
-    ├── TemplateConstants.java    # Global constants: file names, auto date variables, placeholder regexes, default config
-    ├── core/                     # Logic layer: config I/O, parsing, rendering, expression evaluation, etc.
-    │   ├── ConfigStore.java         # template.conf read/write
+    ├── TemplateConstants.java    # Global constants: file names, auto date variables, placeholder regexes, default example template
+    ├── core/                     # Logic layer: template I/O, parsing, rendering, expression evaluation, etc.
+    │   ├── TemplateStore.java       # Templates folder read/write (list / read / write / first-run example)
     │   ├── ExpressionEvaluator.java # Safe arithmetic evaluation (+ - * / ** and parentheses, hand-written recursive-descent parser)
-    │   ├── LastValuesStore.java     # last_values.json read/write (last-input memory, UTF-8 with BOM)
+    │   ├── LastValuesStore.java     # last_values.json read/write (last-input / template memory, UTF-8 with BOM)
     │   ├── MiniJson.java            # JSON read/write
     │   ├── TemplateParser.java      # Template placeholder parsing: extracts variables / auto dates / string variables
     │   ├── TemplateRenderer.java    # Renders the template into the final result (substitution, evaluation, verbatim strings)
