@@ -26,7 +26,7 @@ public final class TemplateConstants {
             Set.of("今日年", "今日年月", "今日年月日",
                     "昨日年", "昨日年月", "昨日年月日");
 
-    /** 匹配 {{...}} 占位符；里面可以是变量名，也可以是算术表达式（如 {{数量*单价}}） */
+    /** 匹配 {{...}} 占位符；以 = 开头表示算术表达式（如 {{=数量*单价}}），否则内容按变量名处理 */
     public static final Pattern PLACEHOLDER_RE = Pattern.compile("\\{\\{([^{}]*)\\}\\}");
     /** 匹配 [[...]] 字符串占位符：内容原样输出，不参与数值校验 */
     public static final Pattern STRING_RE = Pattern.compile("\\[\\[([^\\[\\]]*)\\]\\]");
@@ -38,14 +38,12 @@ public final class TemplateConstants {
      */
     public static final Pattern IDENT_RE =
             Pattern.compile("(?<![\\p{L}\\p{Nd}_])[\\p{L}\\p{M}][\\p{L}\\p{M}\\p{Nd}_]*");
-    /** 判断一个占位符内容是否为算术表达式（含 + - * / 或括号） */
-    public static final Pattern OPERATOR_RE = Pattern.compile("[+\\-*/()]");
 
     /**
      * 默认示例模板（Templates 文件夹为空时自动生成 example.txt）。
      * 使用真实换行（模板文件是纯文本）；演示数字变量、算术表达式、日期变量与字符串。
      */
     public static final String DEFAULT_TEMPLATE =
-            "{{今日年月日}} 客户编号 {{编号}}：购买 {{数量}} 件，单价 {{单价}} 元，应付 {{数量*单价}} 元。\n"
+            "{{今日年月日}} 客户编号 {{编号}}：购买 {{数量}} 件，单价 {{单价}} 元，应付 {{=数量*单价}} 元。\n"
             + "备注：[[备注]]\n";
 }

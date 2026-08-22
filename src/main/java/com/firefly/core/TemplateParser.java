@@ -14,20 +14,12 @@ import java.util.regex.Pattern;
  */
 public final class TemplateParser {
 
-    /** 纯数字占位符内容，如 0.9 */
-    private static final Pattern NUMBER_RE = Pattern.compile("(?:\\d+(?:\\.\\d+)?|\\.\\d+)");
-
     private TemplateParser() {
     }
 
-    /** 占位符内容是否为纯数字（如 0.9）。 */
-    public static boolean isNumber(String content) {
-        return NUMBER_RE.matcher(content).matches();
-    }
-
-    /** 占位符内容是否为算术表达式（含 + - * / 或括号）。 */
+    /** 占位符内容是否为算术表达式（以 = 开头）。 */
     public static boolean isExpression(String content) {
-        return TemplateConstants.OPERATOR_RE.matcher(content).find();
+        return content.startsWith("=");
     }
 
     /** 单次扫描模板得到的解析结果。 */
@@ -56,12 +48,13 @@ public final class TemplateParser {
                 continue;
             }
             String content = m.group(1).substring(2, m.group(1).length() - 2).trim();
-            if (content.isEmpty() || isNumber(content)) {
+            if (content.isEmpty()) {
                 continue;
             }
             if (isExpression(content)) {
                 exprCount++;
-                Matcher im = TemplateConstants.IDENT_RE.matcher(content);
+                String expr = content.substring(1).trim();
+                Matcher im = TemplateConstants.IDENT_RE.matcher(expr);
                 while (im.find()) {
                     String name = im.group();
                     if (!TemplateConstants.AUTO_VAR_SET.contains(name) && !seenInputs.contains(name)) {

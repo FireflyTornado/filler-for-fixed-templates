@@ -71,7 +71,7 @@ public final class TemplateToolApp extends JFrame {
         this.templateStore = new TemplateStore(appDir);
         this.valuesStore = new LastValuesStore(appDir);
 
-        setSize(950, 1000);
+        setSize(1050, 800);
         setMinimumSize(new java.awt.Dimension(660, 660));
         setDefaultCloseOperation(WindowConstants.DO_NOTHING_ON_CLOSE);
         addWindowListener(new WindowAdapter() {
@@ -135,14 +135,14 @@ public final class TemplateToolApp extends JFrame {
         JPanel tplBottom = new JPanel(new BorderLayout(4, 0));
         tplBottom.setBorder(BorderFactory.createEmptyBorder(4, 8, 8, 8));
         JLabel tplHint = new JLabel(
-                "提示：数字用{{变量名}}，支持运算符{{变量1*变量2}}；日期变量用{{今日年月日}}/{{昨日年月日}}；字符串用[[字符串]]");
+                "提示：{{变量名}} 会生成输入框（内容为纯数字也照常，如{{0.9}}）；运算需加 = 前缀：{{=变量1*变量2}}；日期变量用{{今日年月日}}/{{昨日年月日}}；字符串用[[字符串]]");
         tplHint.setForeground(Color.GRAY);
         tplBottom.add(tplHint, BorderLayout.WEST);
         tpl.add(tplBottom, BorderLayout.SOUTH);
         addRow(gc, 1, 0, GridBagConstraints.HORIZONTAL, tpl);
 
         // 变量输入区
-        variablePanel = new InputPanel("变量值输入（留空按 0 处理）", false);
+        variablePanel = new InputPanel("变量值输入（所有 {{变量名}} 均在此填数字，留空按 0 处理）", false);
         addRow(gc, 2, 1, GridBagConstraints.BOTH, variablePanel);
 
         // 字符串输入区

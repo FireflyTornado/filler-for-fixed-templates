@@ -2,74 +2,73 @@
 
 > **Language: [中文](README.md)**
 
-A lightweight desktop utility built with Java Swing: it fills a fixed template with your inputs to produce complete text, ready to copy to the clipboard or save to a file.
+A lightweight Java Swing desktop tool: fills pre-written fixed templates into complete text, and supports copying to the clipboard or saving to a file.
 
 ## Features
 
-- **Auto-generated input fields** → Each `{{variable}}` in the template becomes a numeric input field; empty fields default to `0`, and non-numeric input triggers a warning
-- **Add free-form strings** → `[[string]]` uses a large text input; the content is output verbatim (line breaks, spaces, and formatting preserved)
-- **Expression support** → e.g. `{{var1/var2}}`, supporting `+ - * / **` and parentheses, with results rounded to two decimal places
-- **Automatic dates** → `{{todayYear}}`, `{{todayYearMonth}}`, `{{todayYearMonthDay}}` pull today's system date automatically; `{{yesterdayYear}}`, `{{yesterdayYearMonth}}`, `{{yesterdayYearMonthDay}}` pull yesterday's date
-- **Remembers your last input** → Values are remembered per template in `last_values.json` and auto-filled when that template is opened
-- **Multiple templates** → Template files with arbitrary names live in the `Templates/` folder; pick one via "Select Template…", create new ones, save edits back to the corresponding file, and the last-used template is restored on next launch
-- **Edit templates on the fly** → Modify and save directly in the UI, or open the `Templates/` folder and edit with your system editor
+- **Auto-generated input fields** → every `{{variable}}` in a template automatically becomes a numeric input field; leaving it blank is treated as 0, and entering a non-numeric value shows a warning
+- **Addable strings** → `[[string]]` uses a large text input area, output as-is (including line breaks, spaces, formatting)
+- **Operator support** → a `=` prefix denotes an arithmetic expression, e.g. `{{=variable1/variable2}}`, supporting `+ - * / **` and parentheses, with results rounded to 2 decimal places
+- **Automatic date retrieval** → `{{todayYear}}`, `{{todayYearMonth}}`, `{{todayYearMonthDay}}` automatically take the current system date, and `{{yesterdayYear}}`, `{{yesterdayYearMonth}}`, `{{yesterdayYearMonthDay}}` automatically take the previous day's date
+- **Remembers last input** → each template remembers its last filled values, auto-saved to `last_values.json`, and auto-restored when that template is opened
+- **Multi-template management** → template files with any names are stored in the `Templates/` folder; you can switch via "Choose Template File…", "New Template", save changes back to the corresponding file with "Save Template", and the last-used template is remembered and restored on next startup
+- **Edit templates on the fly** → edit and save directly in the UI, or click "Open Folder" to edit with an external editor
 
 ## Quick Start
 
-**Requirements**: Windows + JDK 17 or later.
+**Requirements**: Windows + JDK 17 or higher.
 
-**Run** (either way):
+**Run**:
 
 1. Double-click `launcher.bat`
-2. Run `java -jar TemplateTool.jar` from the command line
+2. Or run `java -jar TemplateTool.jar` in a command line
 
-**Modify the template**: Templates are plain-text files with arbitrary names inside the `Templates/` folder (real line breaks). Click "Select Template…" to pick the one to use, edit it in the box below, then click "Save Template" to write it back; "New Template" creates a new file; "Open Folder" lets you edit with an external editor.
+**Edit templates**: templates are plain-text files inside the `Templates/` folder. Click "Choose Template File…" in the top bar to pick the template to use, edit in the area below, then click "Save Template" to write back to that file; "New Template" creates a new file; "Open Folder" opens the templates folder for direct template file management.
 
-## Placeholder Syntax
+## Syntax
 
 | Syntax | Description | Example |
 | --- | --- | --- |
-| `{{variable}}` | Generates a numeric input field; empty defaults to `0` | `{{yesterdayData}}` |
-| `{{var1*var2}}` | Arithmetic expression, result rounded to 2 decimals | `{{monthlyTotal/monthlyPlan}}` |
-| `{{todayYear}} {{todayYearMonth}} {{todayYearMonthDay}}` | Auto-fetched today's date variables | `{{todayYearMonthDay}}` |
-| `{{yesterdayYear}} {{yesterdayYearMonth}} {{yesterdayYearMonthDay}}` | Auto-fetched yesterday's date variables | `{{yesterdayYearMonthDay}}` |
-| `[[stringName]]` | Multi-line text, output verbatim | `[[notes]]` |
-| Enter | Line break in the template | Templates are plain text, just press Enter |
+| `{{variable}}` | Generates a numeric input field; blank is treated as 0 | `{{yesterdayData}}` |
+| `{{=variable1*variable2}}` | Arithmetic expression (requires `=` prefix), result rounded to 2 decimal places | `{{=monthlyTotal/monthlyPlan}}` |
+| `{{todayYear}} {{todayYearMonth}} {{todayYearMonthDay}}` | Auto-fetches today's date variable | `{{todayYearMonthDay}}` |
+| `{{yesterdayYear}} {{yesterdayYearMonth}} {{yesterdayYearMonthDay}}` | Auto-fetches yesterday's date variable | `{{yesterdayYearMonthDay}}` |
+| `[[stringName]]` | Multi-line text, output as-is | `[[remarks]]` |
 
 ## Build
 
-Double-click `build.bat`, or run it from the command line:
+Double-click `build.bat`, or run in a command line:
 
 ```bat
 build.bat
 ```
 
-Building requires a JDK (with `javac` and `jar`). On success, `TemplateTool.jar` is generated.
+Building requires a JDK (with `javac` and `jar`); on success it generates `TemplateTool.jar`.
 
 ## Directory Structure
 
 ```
-├── build.bat               # Compiles sources and packages TemplateTool.jar (auto-detects JDK)
-├── launcher.bat            # One-click launcher (auto-detects java)
-├── Templates/              # Template files folder (arbitrary names; example.txt auto-created on first run)
-├── last_values.json        # Per-template input memory + last-used template (auto-generated after each use)
+├── build.bat               # Compiles the source and packages TemplateTool.jar (auto-detects JDK)
+├── launcher.bat            # One-click launch (auto-detects java)
+├── Templates/              # Directory for template files (any names; auto-generates example.txt on first run)
+├── last_values.json        # Per-template memory of last input + last-used template (auto-generated after use)
 └── src/main/java/com/firefly/
-    ├── Main.java                 # Program entry point: high-DPI / system look-and-feel, starts the main window
-    ├── TemplateToolApp.java      # Main window: layout, event handling, data sync
-    ├── TemplateConstants.java    # Global constants: file names, auto date variables, placeholder regexes, default example template
-    ├── core/                     # Logic layer: template I/O, parsing, rendering, expression evaluation, etc.
-    │   ├── TemplateStore.java       # Templates folder read/write (list / read / write / first-run example)
-    │   ├── ExpressionEvaluator.java # Safe arithmetic evaluation (+ - * / ** and parentheses, hand-written recursive-descent parser)
-    │   ├── LastValuesStore.java     # last_values.json read/write (last-input / template memory, UTF-8 with BOM)
+    ├── Main.java                 # Program entry: sets high-DPI / system look-and-feel, launches the main window
+    ├── TemplateToolApp.java      # Main window: UI layout, event handling, data sync
+    ├── TemplateConstants.java    # Global constants: file names, automatic date variables, placeholders/regex, default example template
+    ├── core/                     # Logic layer: template read/write, parsing, rendering, evaluation, etc.
+    │   ├── TemplateStore.java       # Reads/writes the Templates folder (list/read/write, generates example template on first run)
+    │   ├── ExpressionEvaluator.java # Safe arithmetic expression evaluation (+ - * / ** and parentheses; hand-written recursive-descent parser)
+    │   ├── LastValuesStore.java     # Reads/writes last_values.json (last input/template memory; UTF-8 with BOM)
     │   ├── MiniJson.java            # JSON read/write
     │   ├── TemplateParser.java      # Template placeholder parsing: extracts variables / auto dates / string variables
-    │   ├── TemplateRenderer.java    # Renders the template into the final result (substitution, evaluation, verbatim strings)
-    │   ├── TextFileWriter.java      # Text file I/O (UTF-8 with BOM, LF→CRLF, notepad-friendly)
-    │   └── ValueNormalizer.java     # Numeric input validation / normalization (empty → 0, non-numeric → null)
+    │   ├── TemplateRenderer.java    # Renders a template to the final result (substitution, evaluation, as-is string output)
+    │   ├── TextFileWriter.java      # Text file read/write (UTF-8 with BOM, converts newlines to CRLF, Notepad-compatible)
+    │   └── ValueNormalizer.java     # Numeric input validation/normalization (blank is 0, non-numeric returns null)
     └── ui/                     # Swing UI components
-        ├── ResultPanel.java          # "Result output" area (read-only multi-line text)
+        ├── ResultPanel.java          # "Result Output" area (read-only multi-line text)
         ├── ScrollablePanel.java      # Scrollable vertical form panel (width adapts, height follows content)
-        └── InputPanel.java           # "Variable/string input" area (single-line {{var}}, multi-line [[string]], with error highlighting)
+        └── InputPanel.java           # "Variable/String Input" area (variables {{}} single-line, strings [[]] multi-line, with error highlighting)
 ```
 
 ## License

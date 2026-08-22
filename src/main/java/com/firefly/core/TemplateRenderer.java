@@ -9,9 +9,9 @@ import java.util.regex.Matcher;
 /**
  * 把模板渲染成最终结果。
  * 规则：
- *   * 普通 {{变量名}}           -> 用户输入的值
+ *   * 普通 {{变量名}}           -> 用户输入的值（纯数字内容也作为变量名处理）
  *   * 自动日期变量               -> 系统日期
- *   * {{数量*单价}} 等表达式     -> 求值并保留两位小数
+ *   * {{=数量*单价}} 等表达式   -> 求值并保留两位小数
  *   * [[字符串名]]               -> 原样替换（含换行、空格、格式）
  */
 public final class TemplateRenderer {
@@ -53,15 +53,14 @@ public final class TemplateRenderer {
                 if (content.isEmpty()) {
                     out.append(whole);
                 } else if (TemplateParser.isExpression(content)) {
+                    String expr = content.substring(1).trim();
                     try {
-                        double r = ExpressionEvaluator.evaluate(content, values);
+                        double r = ExpressionEvaluator.evaluate(expr, values);
                         out.append(String.format(Locale.ROOT, "%.2f", r));
                     } catch (ExpressionEvaluator.EvalException e) {
                         return new RenderResult(null,
-                                "表达式「" + content + "」" + e.getMessage());
+                                "表达式「" + expr + "」" + e.getMessage());
                     }
-                } else if (TemplateParser.isNumber(content)) {
-                    out.append(content);
                 } else if (autoVals.containsKey(content)) {
                     out.append(autoVals.get(content));
                 } else {
