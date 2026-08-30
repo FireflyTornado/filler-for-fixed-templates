@@ -19,6 +19,9 @@ manifest.tmp
 last_values.json
 Templates/
 
+# ---- 测试----
+test/
+
 # ---- 日志 ----
 *.log
 

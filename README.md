@@ -13,6 +13,7 @@
 - **记忆上次输入** → 每个模板分别记住上次填的内容，自动保存到 `last_values.json`，打开对应模板时自动回填
 - **多模板管理** → 模板文件任意命名存放在 `Templates/` 文件夹内，可「选择模板文件…」切换、「新建模板」、修改后「保存模板」写回对应文件，并记住上次使用的模板，下次启动自动恢复
 - **模板即时修改** → 可在界面中直接编辑并保存，或点「打开文件夹」用外部编辑器修改
+- **Word 模板支持** → 可直接选择 `.docx` 文件作为模板，正文、表格、页眉/页脚、脚注/尾注、批注、文本框中的 `{{变量名}}` 与 `[[字符串]]` 都会被替换，且保留原有文字格式（字体、加粗、字号、颜色）与段落格式（对齐、缩进、行距）；生成的 Word 结果通过「保存结果到文件」导出
 
 ## 快速开始
 
@@ -24,6 +25,8 @@
 2. 命令行执行 `java -jar TemplateTool.jar`
 
 **修改模板**：模板是 `Templates/` 文件夹内的纯文本文件。点击顶栏「选择模板文件…」选择要用的模板，在下方编辑区修改后点「保存模板」写回该文件；「新建模板」可创建新文件；「打开文件夹」可打开模板文件夹，直接管理模板文件。
+
+**使用 Word 模板**：在 Word 中把需要填写的部分写成 `{{变量名}}`（数字/表达式/日期变量）或 `[[字符串]]`（多行文本），保存为 `.docx` 后放入 `Templates/` 文件夹，再用「选择模板文件…」选中它。此时模板内容以只读预览显示，「新建模板 / 保存模板」自动禁用；填写输入后点「生成结果」会得到一份替换完成的 Word 文档，再点「保存结果到文件」导出（默认 `result.docx`）。
 
 ## 语法
 
@@ -50,19 +53,20 @@ build.bat
 ```
 ├── build.bat               # 编译源码并打包 TemplateTool.jar（自动查找 JDK）
 ├── launcher.bat            # 一键运行（自动查找 java）
-├── Templates/              # 模板文件存放目录（任意命名；首次运行自动生成 example.txt）
+├── Templates/              # 模板文件存放目录（任意命名；首次运行自动生成 example.txt 与 example.docx）
 ├── last_values.json        # 分模板记忆上次输入 + 上次使用模板（使用完成后自动生成）
 └── src/main/java/com/firefly/
     ├── Main.java                 # 程序入口：设置高 DPI / 系统外观，启动主窗口
     ├── TemplateToolApp.java      # 主窗口：界面布局、事件处理、数据同步
     ├── TemplateConstants.java    # 全局常量：文件名、自动日期变量、占位符/正则、默认示例模板
     ├── core/                     # 逻辑层：模板读写、解析、渲染、求值等
-    │   ├── TemplateStore.java       # Templates 文件夹读写（列举/读取/写入/首次生成示例模板）
+    │   ├── TemplateStore.java       # Templates 文件夹读写（列举/读取/写入/首次生成 example.txt 与 example.docx）
     │   ├── ExpressionEvaluator.java # 安全算术表达式求值（+ - * / ** 与括号，自写递归下降解析）
     │   ├── LastValuesStore.java     # last_values.json 读写（上次输入/模板记忆，UTF-8 带 BOM）
     │   ├── MiniJson.java            # JSON 读写
+    │   ├── DocxProcessor.java       # Word（.docx）模板：文本提取 + 占位符替换 + 内置 example.docx 生成（零依赖，保留 run/段落格式）
     │   ├── TemplateParser.java      # 模板占位符解析：提取变量 / 自动日期 / 字符串变量
-    │   ├── TemplateRenderer.java    # 把模板渲染成最终结果（替换、求值、原样输出字符串）
+    │   ├── TemplateRenderer.java    # 把模板渲染成最终结果（替换、求值、原样输出字符串；纯文本与 Word 共用 resolve）
     │   ├── TextFileWriter.java      # 文本文件读写（UTF-8 带 BOM、换行转 CRLF，兼容记事本）
     │   └── ValueNormalizer.java     # 数字输入校验/规范化（留空按 0，非数字返回 null）
     └── ui/                     # Swing 界面组件

@@ -1,5 +1,8 @@
 package com.firefly;
 
+import java.time.LocalDate;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
 
@@ -18,6 +21,7 @@ public final class TemplateConstants {
     /** 模板文件夹名 / 示例模板文件名 / 记忆上次使用的模板时写入 last_values.json 的保留键 */
     public static final String TEMPLATES_DIR_NAME = "Templates";
     public static final String EXAMPLE_TEMPLATE_NAME = "example.txt";
+    public static final String EXAMPLE_DOCX_NAME = "example.docx";
     public static final String LAST_TEMPLATE_KEY = "@@last_template@@";
 
     /** 自动日期：出现在模板中时，由系统日期自动填充，无需手动输入。
@@ -38,6 +42,22 @@ public final class TemplateConstants {
      */
     public static final Pattern IDENT_RE =
             Pattern.compile("(?<![\\p{L}\\p{Nd}_])[\\p{L}\\p{M}][\\p{L}\\p{M}\\p{Nd}_]*");
+
+    /**
+     * 根据系统日期生成自动变量的替换值。今日… 取当天，昨日… 取前一天。
+     * 键与 {@link #AUTO_VAR_SET} 一一对应。
+     */
+    public static Map<String, String> autoValues(LocalDate now) {
+        LocalDate yesterday = now.minusDays(1);
+        Map<String, String> map = new LinkedHashMap<>();
+        map.put("今日年", now.getYear() + "年");
+        map.put("今日年月", now.getYear() + "年" + now.getMonthValue() + "月");
+        map.put("今日年月日", now.getYear() + "年" + now.getMonthValue() + "月" + now.getDayOfMonth() + "日");
+        map.put("昨日年", yesterday.getYear() + "年");
+        map.put("昨日年月", yesterday.getYear() + "年" + yesterday.getMonthValue() + "月");
+        map.put("昨日年月日", yesterday.getYear() + "年" + yesterday.getMonthValue() + "月" + yesterday.getDayOfMonth() + "日");
+        return map;
+    }
 
     /**
      * 默认示例模板（Templates 文件夹为空时自动生成 example.txt）。

@@ -68,12 +68,20 @@ public final class TemplateStore {
         TextFileWriter.writeText(templateFile(name), content);
     }
 
-    /** 确保模板文件夹非空：目录不存在或里面没有模板时，创建 example.txt（写入内置默认示例）。 */
+    /**
+     * 确保模板文件夹非空：目录不存在或里面没有模板时，生成内置示例模板——
+     * example.txt（纯文本示例）与 example.docx（Word 示例，占位符与 example.txt 一致）。
+     */
     public void ensureTemplatesExist() throws IOException {
         if (!listTemplateNames().isEmpty()) {
             return;
         }
         Files.createDirectories(templatesDir);
         writeTemplate(TemplateConstants.EXAMPLE_TEMPLATE_NAME, TemplateConstants.DEFAULT_TEMPLATE);
+        try {
+            DocxProcessor.createExampleDocx(templateFile(TemplateConstants.EXAMPLE_DOCX_NAME));
+        } catch (IOException e) {
+            // 忽略：Word 示例生成失败不影响主流程（文本示例已就绪）
+        }
     }
 }
