@@ -21,6 +21,19 @@ public final class LastValuesStore {
         this.valuesFile = appDir.resolve(TemplateConstants.VALUES_FILENAME);
     }
 
+    public boolean exists() {
+        return Files.isRegularFile(valuesFile);
+    }
+
+    /** 仅供新版的一次性迁移读取；返回副本，绝不写回旧文件。 */
+    public Map<String, Map<String, String>> loadAllForMigration() {
+        Map<String, Map<String, String>> copy = new LinkedHashMap<>();
+        for (Map.Entry<String, Map<String, String>> entry : loadAll().entrySet()) {
+            copy.put(entry.getKey(), new LinkedHashMap<>(entry.getValue()));
+        }
+        return copy;
+    }
+
     /** 读取整个存档：模板名 → 该模板上次的输入；文件不存在或损坏时返回空字典。 */
     private Map<String, Map<String, String>> loadAll() {
         if (!Files.exists(valuesFile)) {

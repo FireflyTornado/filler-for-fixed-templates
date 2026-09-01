@@ -14,6 +14,7 @@ cd /d "%~dp0"
 
 rem Clear stale classes from a previous build, so they never leak into the jar.
 if exist "out" rd /s /q "out"
+if exist "out-test" rd /s /q "out-test"
 
 rem Default to PATH tools; a JDK dir below overrides them.
 set "JAVAC=javac"
@@ -60,6 +61,30 @@ if errorlevel 1 (
     exit /b 1
 )
 echo.
+
+if exist "src\test\java" (
+    echo Compiling and running tests...
+    mkdir "out-test"
+    rem Compile tests with sources in one invocation. This also avoids classpath
+    rem resolution issues when the project directory contains non-ASCII text.
+    "%JAVAC%" --release 17 -encoding UTF-8 -d "out-test" ^
+        src\main\java\com\firefly\*.java ^
+        src\main\java\com\firefly\core\*.java ^
+        src\main\java\com\firefly\ui\*.java ^
+        src\test\java\com\firefly\*.java
+    if errorlevel 1 (
+        echo [ERROR] Test compilation failed.
+        pause
+        exit /b 1
+    )
+    java -cp "out-test" com.firefly.TemplateFeatureTests
+    if errorlevel 1 (
+        echo [ERROR] Tests failed.
+        pause
+        exit /b 1
+    )
+    echo.
+)
 
 echo Packaging TemplateTool.jar...
 "%JAR%" --create --file "TemplateTool.jar" --main-class com.firefly.Main -C "out" .

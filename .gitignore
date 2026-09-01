@@ -1,5 +1,6 @@
 # ---- 构建产物 ----
 /out/
+/out-test/
 *.class
 manifest.tmp
 
@@ -17,10 +18,12 @@ manifest.tmp
 
 # ---- 运行期状态----
 last_values.json
+config.json
+Config/
 Templates/
 
 # ---- 测试----
-test/
+/test/
 
 # ---- 日志 ----
 *.log

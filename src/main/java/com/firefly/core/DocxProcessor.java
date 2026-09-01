@@ -211,6 +211,14 @@ public final class DocxProcessor {
         return new TemplateRenderer.RenderResult(extractText(dst), null);
     }
 
+    /** 新版统一变量入口：{{变量}} 与 [[变量]] 共用同一份变量值。 */
+    public static TemplateRenderer.RenderResult renderUnified(Path src, Path dst,
+                                                               Map<String, String> values,
+                                                               Map<String, String> autoVals)
+            throws IOException {
+        return render(src, dst, values, autoVals, values);
+    }
+
     /** 处理一个部件：解析 XML → 逐段替换 → 序列化回 XML 字节。 */
     private static byte[] processPart(byte[] xml, Map<String, String> values,
                                       Map<String, String> autoVals,

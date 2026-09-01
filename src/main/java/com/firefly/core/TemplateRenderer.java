@@ -26,6 +26,13 @@ public final class TemplateRenderer {
     private TemplateRenderer() {
     }
 
+    /** 新版统一变量入口：两种占位符语法从同一个名称到值映射中取值。 */
+    public static RenderResult renderUnified(String template,
+                                             Map<String, String> values,
+                                             Map<String, String> autoVals) {
+        return render(template, values, autoVals, values);
+    }
+
     public static RenderResult render(String template,
                                       Map<String, String> values,
                                       Map<String, String> autoVals,
