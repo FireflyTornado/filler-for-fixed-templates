@@ -5,7 +5,6 @@ import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
 import java.awt.BorderLayout;
-import java.awt.Font;
 
 /**
  * 「结果输出」区：只读的多行文本，展示生成结果。
@@ -16,11 +15,10 @@ public final class ResultPanel extends JPanel {
 
     public ResultPanel() {
         super(new BorderLayout());
-        setBorder(BorderFactory.createTitledBorder("结果输出"));
+        setBorder(BorderFactory.createTitledBorder("生成结果"));
         area.setEditable(false);
         area.setLineWrap(true);
         area.setWrapStyleWord(true);
-        area.setFont(new Font("Microsoft YaHei UI", Font.PLAIN, 12));
         JScrollPane scroll = new JScrollPane(area);
         add(scroll, BorderLayout.CENTER);
     }

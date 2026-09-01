@@ -62,8 +62,21 @@ public final class TemplateConfigStore {
                 }
                 String typeName = data.get("type") instanceof String text ? text : null;
                 String value = data.get("value") instanceof String text ? text : "";
+                Map<VariableType, String> drafts = new java.util.EnumMap<>(VariableType.class);
+                boolean hasDraftsField = data.get("drafts") instanceof Map<?, ?>;
+                if (data.get("drafts") instanceof Map<?, ?> draftData) {
+                    for (Map.Entry<?, ?> draft : draftData.entrySet()) {
+                        if (draft.getKey() instanceof String draftType
+                                && draft.getValue() instanceof String draftValue) {
+                            VariableType parsedDraftType = VariableType.fromName(draftType, null);
+                            if (parsedDraftType != null) drafts.put(parsedDraftType, draftValue);
+                        }
+                    }
+                }
+                VariableType parsedType = VariableType.fromName(typeName, null);
+                if (parsedType != null && !hasDraftsField) drafts.putIfAbsent(parsedType, value);
                 config.variables().put(name, new TemplateConfig.Entry(
-                        VariableType.fromName(typeName, null), value));
+                        parsedType, value, drafts));
             }
         } catch (Exception ignored) {
             // 此模板的配置损坏只使该模板回退默认值。
@@ -75,7 +88,8 @@ public final class TemplateConfigStore {
     public void save(String templateName, Map<String, VariableInputState> states) throws IOException {
         TemplateConfig merged = load(templateName);
         for (VariableInputState state : states.values()) {
-            merged.variables().put(state.name(), new TemplateConfig.Entry(state.type(), state.value()));
+            merged.variables().put(state.name(), new TemplateConfig.Entry(
+                    state.type(), state.value(), state.drafts()));
         }
         saveConfig(merged);
     }
@@ -91,6 +105,11 @@ public final class TemplateConfigStore {
                     ? VariableType.NUMBER : item.getValue().type();
             data.put("type", type.name());
             data.put("value", item.getValue().value());
+            Map<String, Object> drafts = new LinkedHashMap<>();
+            for (Map.Entry<VariableType, String> draft : item.getValue().drafts().entrySet()) {
+                drafts.put(draft.getKey().name(), draft.getValue());
+            }
+            data.put("drafts", drafts);
             variables.put(item.getKey(), data);
         }
         root.put("variables", variables);

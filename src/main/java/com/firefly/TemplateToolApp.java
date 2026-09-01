@@ -4,6 +4,10 @@ import com.firefly.core.*;
 import com.firefly.ui.DatePickerPanel;
 import com.firefly.ui.ResultPanel;
 import com.firefly.ui.VariableInputPanel;
+import com.firefly.ui.IssueSeverity;
+import com.firefly.ui.TemplateHelpDialog;
+import com.firefly.ui.ValidationIssue;
+import com.firefly.ui.ValidationIssueManager;
 
 import javax.swing.*;
 import javax.swing.Timer;
@@ -26,7 +30,6 @@ import java.util.*;
 
 /** 主窗口：编排左右分栏，并协调模板、统一变量状态、生成结果与配置。 */
 public final class TemplateToolApp extends JFrame {
-    private static final Font UI_FONT = new Font("Microsoft YaHei UI", Font.PLAIN, 12);
     private final TemplateStore templateStore;
     private final AppConfigStore appConfigStore;
     private final TemplateConfigStore templateConfigStore;
@@ -34,13 +37,14 @@ public final class TemplateToolApp extends JFrame {
     private final AppConfig appConfig;
     private final Timer templateSyncTimer;
     private final Timer templateConfigSaveTimer;
+    private final ValidationIssueManager issueManager = new ValidationIssueManager();
 
     private JLabel templateNameLabel, statusLabel;
     private JTextArea templateText;
     private DatePickerPanel datePicker;
     private VariableInputPanel variablePanel;
     private ResultPanel resultPanel;
-    private JButton newBtn, saveTplBtn, generateBtn, copyBtn, saveResultBtn;
+    private JButton newBtn, saveTplBtn, generateBtn, copyBtn, saveResultBtn, helpBtn;
     private TitledBorder templateBorder;
     private JPanel templatePanel;
     private JSplitPane mainSplit, previewResultSplit;
@@ -50,6 +54,8 @@ public final class TemplateToolApp extends JFrame {
     private Path currentDocxResult;
     private Map<String, VariableInputState> variableStates = new LinkedHashMap<>();
     private TemplateConfig persistedTemplateConfig = new TemplateConfig("");
+    private TemplateHelpDialog helpDialog;
+    private String fullStatusText = " ";
 
     public TemplateToolApp(Path appDir) {
         super("模板填充工具");
@@ -70,6 +76,7 @@ public final class TemplateToolApp extends JFrame {
         });
         buildUi();
         installChangeListeners();
+        installKeyboardActions();
         initTemplates(appDir);
         setLocationRelativeTo(null);
         SwingUtilities.invokeLater(this::restoreDividerLocations);
@@ -93,6 +100,9 @@ public final class TemplateToolApp extends JFrame {
                 BorderFactory.createEmptyBorder(4, 8, 2, 8)));
         statusLabel.setPreferredSize(new Dimension(10, 27));
         statusLabel.setMinimumSize(new Dimension(0, 27));
+        statusLabel.addComponentListener(new java.awt.event.ComponentAdapter() {
+            @Override public void componentResized(java.awt.event.ComponentEvent e) { refreshStatusLabel(); }
+        });
         root.add(statusLabel, BorderLayout.SOUTH);
     }
 
@@ -100,11 +110,10 @@ public final class TemplateToolApp extends JFrame {
         JPanel left = new JPanel(new BorderLayout(5, 5));
         left.add(buildTemplateToolbar(), BorderLayout.NORTH);
         templatePanel = new JPanel(new BorderLayout());
-        templateBorder = BorderFactory.createTitledBorder("模板内容（{{变量}} 为推荐格式）");
+        templateBorder = BorderFactory.createTitledBorder("模板");
         templatePanel.setBorder(templateBorder);
         templatePanel.setMinimumSize(new Dimension(300, 170));
         templateText = new JTextArea();
-        templateText.setFont(UI_FONT);
         templateText.setLineWrap(true);
         templateText.setWrapStyleWord(true);
         templatePanel.add(new JScrollPane(templateText));
@@ -140,15 +149,20 @@ public final class TemplateToolApp extends JFrame {
         templateNameLabel.setForeground(Color.GRAY);
         info.add(templateNameLabel);
         toolbar.add(info, BorderLayout.NORTH);
-        JPanel buttons = new JPanel(new FlowLayout(FlowLayout.LEFT, 5, 0));
+        JPanel buttons = new JPanel(new GridLayout(0, 3, 5, 4));
         JButton choose = new JButton("选择模板文件…"), open = new JButton("打开文件夹");
         newBtn = new JButton("新建模板"); saveTplBtn = new JButton("保存模板");
-        buttons.add(choose); buttons.add(newBtn); buttons.add(saveTplBtn); buttons.add(open);
+        helpBtn = new JButton("帮助");
+        helpBtn.setMnemonic('H');
+        helpBtn.setToolTipText("模板变量语法和当前模板变量（F1）");
+        helpBtn.getAccessibleContext().setAccessibleName("打开模板变量帮助");
+        buttons.add(choose); buttons.add(newBtn); buttons.add(saveTplBtn); buttons.add(open); buttons.add(helpBtn);
         toolbar.add(buttons, BorderLayout.SOUTH);
         choose.addActionListener(e -> chooseTemplate());
         newBtn.addActionListener(e -> newTemplate());
         saveTplBtn.addActionListener(e -> saveTemplate());
         open.addActionListener(e -> openTemplatesFolder());
+        helpBtn.addActionListener(e -> showHelp());
         return toolbar;
     }
 
@@ -157,7 +171,8 @@ public final class TemplateToolApp extends JFrame {
         datePicker = new DatePickerPanel();
         datePicker.setBorder(BorderFactory.createTitledBorder("日期基准"));
         right.add(datePicker, BorderLayout.NORTH);
-        variablePanel = new VariableInputPanel();
+        variablePanel = new VariableInputPanel(issueManager);
+        variablePanel.setStatusListener(this::setStatus);
         right.add(variablePanel);
         return right;
     }
@@ -172,10 +187,34 @@ public final class TemplateToolApp extends JFrame {
             if (!programmaticUpdate) {
                 invalidateResult("内容已修改，请重新生成。");
                 templateConfigSaveTimer.restart();
+                if (helpDialog != null) helpDialog.refreshIfVisible();
             }
         });
         datePicker.setChangeListener(() -> {
-            if (!programmaticUpdate) invalidateResult("内容已修改，请重新生成。");
+            if (!programmaticUpdate) {
+                refreshDateValidation();
+                invalidateResult("内容已修改，请重新生成。");
+            }
+        });
+        refreshDateValidation();
+    }
+
+    private void installKeyboardActions() {
+        JRootPane root = getRootPane();
+        root.setDefaultButton(generateBtn);
+        bind(root, KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_ENTER,
+                java.awt.event.KeyEvent.CTRL_DOWN_MASK), "generate", this::generate);
+        bind(root, KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_S,
+                java.awt.event.KeyEvent.CTRL_DOWN_MASK), "saveTemplate", this::saveTemplate);
+        bind(root, KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_F1, 0), "help", this::showHelp);
+        bind(root, KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_F4, 0),
+                "nextError", variablePanel::locateNextIssue);
+    }
+
+    private static void bind(JRootPane root, KeyStroke key, String name, Runnable action) {
+        root.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW).put(key, name);
+        root.getActionMap().put(name, new AbstractAction() {
+            @Override public void actionPerformed(java.awt.event.ActionEvent e) { action.run(); }
         });
     }
 
@@ -213,6 +252,7 @@ public final class TemplateToolApp extends JFrame {
         if (!text.equals(currentTemplate)) {
             currentTemplate = text;
             rebuildVariableStates(TemplateParser.parse(text));
+            if (helpDialog != null) helpDialog.refreshIfVisible();
         }
     }
 
@@ -238,7 +278,8 @@ public final class TemplateToolApp extends JFrame {
                         ? spec.defaultType() : saved.type();
                 if (spec.numericLocked()) type = VariableType.NUMBER;
                 next.put(spec.name(), new VariableInputState(spec.name(), type,
-                        saved == null ? "" : saved.value(), spec.numericLocked(),
+                        saved == null ? "" : saved.value(), saved == null ? Map.of() : saved.drafts(),
+                        spec.numericLocked(),
                         spec.legacySyntax(), spec.braceSyntax()));
             }
         }
@@ -246,6 +287,7 @@ public final class TemplateToolApp extends JFrame {
         programmaticUpdate = true;
         try { variablePanel.rebuild(variableStates); }
         finally { programmaticUpdate = false; }
+        if (helpDialog != null) helpDialog.refreshIfVisible();
     }
 
     private void loadTemplate(String name) {
@@ -258,6 +300,7 @@ public final class TemplateToolApp extends JFrame {
                     : templateStore.readTemplate(name);
         } catch (IOException e) { showError("无法读取模板文件：\n" + e, "读取失败"); return; }
         currentTemplateName = name; currentTemplate = text; lastDiskContent = text;
+        issueManager.clear();
         currentTemplateSaved = true;
         setTemplateText(text);
         setDocxMode(word);
@@ -275,10 +318,10 @@ public final class TemplateToolApp extends JFrame {
         templateText.setEditable(!word);
         newBtn.setEnabled(true);
         saveTplBtn.setEnabled(!word);
-        templateBorder.setTitle(word
-                ? "Word 模板为只读预览，请使用 Word 编辑后重新打开或重新加载"
-                : "模板内容（{{变量}} 为推荐格式，可直接编辑并保存）");
+        templateBorder.setTitle(word ? "模板（Word 只读）" : "模板");
         templatePanel.repaint();
+        if (word) setStatus("Word 模板为只读预览。",
+                "Word 模板为只读预览，请使用 Word 编辑后重新打开或重新加载。");
     }
 
     private void chooseTemplate() {
@@ -318,6 +361,7 @@ public final class TemplateToolApp extends JFrame {
         templateConfigSaveTimer.stop();
         saveCurrentTemplateConfig(false);
         currentTemplateName = name; currentTemplate = ""; lastDiskContent = "";
+        issueManager.clear();
         currentTemplateSaved = false; persistedTemplateConfig = templateConfigStore.load(name);
         variableStates = new LinkedHashMap<>();
         setDocxMode(false); setTemplateText(""); rebuildVariableStates(TemplateParser.parse(""));
@@ -335,7 +379,7 @@ public final class TemplateToolApp extends JFrame {
             lastDiskContent = currentTemplate; currentTemplateSaved = true;
         } catch (IOException e) { showError("无法写入模板文件：\n" + e, "保存失败"); return false; }
         updateDirtyIndicator(); rememberTemplate(currentTemplateName);
-        setStatus("模板已保存到：" + templateStore.templateFile(currentTemplateName));
+        setStatus("模板已保存。", "模板已保存到：" + templateStore.templateFile(currentTemplateName));
         if (showSuccess) JOptionPane.showMessageDialog(this, "模板已保存。", "已保存", JOptionPane.INFORMATION_MESSAGE);
         return true;
     }
@@ -395,10 +439,11 @@ public final class TemplateToolApp extends JFrame {
     private void generate() {
         invalidateResult(null);
         if (syncTemplate()) { setStatus("输入项已更新，请填写后再次生成。"); return; }
+        refreshAllValidation();
         Map<String, String> values = validatedReplacementValues();
         if (values == null) return;
         LocalDate date = datePicker.getSelectedDate();
-        if (date == null) { showWarning("基准日期格式不正确，请输入有效日期，例如 2026-09-01。", "日期格式错误"); return; }
+        if (date == null) { refreshDateValidation(); showWarning("基准日期格式不正确，请输入有效日期，例如 2026-09-01。", "日期格式错误"); return; }
         TemplateParser.ParsedTemplate parsed = TemplateParser.parse(currentTemplate);
         Map<String, String> auto = TemplateConstants.autoValues(date);
         if (docxMode) { generateDocx(parsed, values, auto, date); return; }
@@ -418,11 +463,11 @@ public final class TemplateToolApp extends JFrame {
             } else values.put(state.name(), state.value());
         }
         if (!problems.isEmpty()) {
-            variablePanel.markInvalid(problems);
+            variablePanel.refreshAllValidation();
             showWarning("以下数值变量格式不正确：\n\n" + String.join("、", problems) + "\n\n内容已保留，请修改后重新生成。", "输入格式错误");
             setStatus("存在无效数值，未生成结果。"); return null;
         }
-        variablePanel.markAllValid(); return values;
+        return values;
     }
 
     private void generateDocx(TemplateParser.ParsedTemplate parsed, Map<String, String> values,
@@ -442,10 +487,8 @@ public final class TemplateToolApp extends JFrame {
     }
 
     private static String buildSuccessMessage(TemplateParser.ParsedTemplate parsed, LocalDate date) {
-        String message = "生成成功：已填入 " + parsed.variables().size() + " 个变量。";
-        if (!parsed.autoVariables().isEmpty()) message += " 自动填充 " + parsed.autoVariables().size() + " 个日期变量（基准 " + date + "）。";
-        if (parsed.expressionCount() > 0) message += " 计算 " + parsed.expressionCount() + " 个表达式。";
-        return message;
+        return "生成成功：" + parsed.variables().size() + " 个变量，"
+                + parsed.expressionCount() + " 个表达式。";
     }
 
     private void invalidateResult(String reason) {
@@ -475,7 +518,7 @@ public final class TemplateToolApp extends JFrame {
             if (file == null || !confirmFileOverwrite(file)) continue;
             try { TextFileWriter.writeText(file.toPath(), resultPanel.getText()); }
             catch (IOException e) { showError("无法写入文件：\n" + e, "保存失败"); return; }
-            setStatus("结果已保存到：" + file.getAbsolutePath()); return;
+            setStatus("结果已保存。", "结果已保存到：" + file.getAbsolutePath()); return;
         }
     }
     private void saveDocxResult() {
@@ -486,7 +529,7 @@ public final class TemplateToolApp extends JFrame {
             if (file == null || !confirmFileOverwrite(file)) continue;
             try { Files.copy(currentDocxResult, file.toPath(), StandardCopyOption.REPLACE_EXISTING); }
             catch (IOException e) { showError("无法写入文件：\n" + e, "保存失败"); return; }
-            setStatus("结果已保存到：" + file.getAbsolutePath()); return;
+            setStatus("结果已保存。", "结果已保存到：" + file.getAbsolutePath()); return;
         }
     }
 
@@ -543,7 +586,55 @@ public final class TemplateToolApp extends JFrame {
         if (wanted != null) for (String name : names) if (name.equalsIgnoreCase(wanted)) return name;
         return null;
     }
-    private void setStatus(String text) { statusLabel.setText(text); statusLabel.setToolTipText(text); }
+    private void showHelp() {
+        if (helpDialog == null) {
+            helpDialog = new TemplateHelpDialog(this, () -> templateText.getText(),
+                    () -> Map.copyOf(variableStates));
+        }
+        helpDialog.showOrRefresh();
+    }
+
+    private void refreshAllValidation() {
+        variablePanel.refreshAllValidation();
+        refreshDateValidation();
+    }
+
+    private void refreshDateValidation() {
+        boolean invalid = !datePicker.isInputValid();
+        String message = "基准日期格式不正确，请输入有效日期，例如 2026-09-01。";
+        datePicker.showValidationError(invalid, message);
+        if (invalid) issueManager.put(new ValidationIssue("date", null, message,
+                datePicker.inputComponent(), IssueSeverity.ERROR, 0));
+        else issueManager.remove("date");
+    }
+
+    private void setStatus(String text) { setStatus(text, text); }
+    private void setStatus(String shortText, String fullText) {
+        fullStatusText = fullText == null ? shortText : fullText;
+        statusLabel.putClientProperty("shortStatus", shortText == null ? " " : shortText);
+        statusLabel.setToolTipText(fullStatusText);
+        refreshStatusLabel();
+    }
+
+    private void refreshStatusLabel() {
+        Object value = statusLabel.getClientProperty("shortStatus");
+        String text = value instanceof String string ? string : fullStatusText;
+        int width = statusLabel.getWidth() - 16;
+        if (width <= 20) { statusLabel.setText(text); return; }
+        statusLabel.setText(ellipsize(text, statusLabel.getFontMetrics(statusLabel.getFont()), width));
+    }
+
+    static String ellipsize(String text, FontMetrics metrics, int width) {
+        if (text == null || metrics.stringWidth(text) <= width) return text;
+        String suffix = "…";
+        int low = 0, high = text.length();
+        while (low < high) {
+            int mid = (low + high + 1) >>> 1;
+            if (metrics.stringWidth(text.substring(0, mid) + suffix) <= width) low = mid;
+            else high = mid - 1;
+        }
+        return text.substring(0, low) + suffix;
+    }
     private void showWarning(String text, String title) { JOptionPane.showMessageDialog(this, text, title, JOptionPane.WARNING_MESSAGE); }
     private void showError(String text, String title) { JOptionPane.showMessageDialog(this, text, title, JOptionPane.ERROR_MESSAGE); }
 }

@@ -41,6 +41,7 @@ public final class DatePickerPanel extends JPanel {
     private final JTextField dateField = new JTextField(12);
     private final JButton calendarButton = new JButton("选择日期 ▾");
     private final JButton todayButton = new JButton("回到今日");
+    private final JLabel errorLabel = new JLabel("⚠");
     private final JPopupMenu popup = new JPopupMenu();
     private final PopupCalendar calendar;
     private final javax.swing.border.Border normalFieldBorder;
@@ -54,16 +55,22 @@ public final class DatePickerPanel extends JPanel {
         setBorder(BorderFactory.createEmptyBorder(2, 0, 2, 0));
 
         JPanel controls = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
-        controls.add(new JLabel("日期基准："));
+        JLabel dateLabel = new JLabel("日期：");
+        controls.add(dateLabel);
         dateField.setText(DISPLAY_FORMAT.format(selectedDate));
         normalFieldBorder = dateField.getBorder();
         markInputValid();
         controls.add(dateField);
+        dateLabel.setLabelFor(dateField);
+        dateField.getAccessibleContext().setAccessibleName("日期基准");
+        errorLabel.setVisible(false);
+        errorLabel.getAccessibleContext().setAccessibleName("日期输入错误");
+        controls.add(errorLabel);
         controls.add(calendarButton);
         controls.add(todayButton);
         add(controls, BorderLayout.WEST);
 
-        JLabel hint = new JLabel("所有内置日期变量均以此日期为基准");
+        JLabel hint = new JLabel("日期变量以此为准");
         hint.setForeground(HINT_COLOR);
         add(hint, BorderLayout.CENTER);
 
@@ -106,6 +113,29 @@ public final class DatePickerPanel extends JPanel {
         return commitInput() ? selectedDate : null;
     }
 
+    public boolean isInputValid() {
+        try {
+            LocalDate.parse(dateField.getText().trim(), INPUT_FORMAT);
+            return true;
+        } catch (DateTimeParseException e) {
+            return false;
+        }
+    }
+
+    public JTextField inputComponent() { return dateField; }
+
+    public void showValidationError(boolean invalid, String message) {
+        errorLabel.setVisible(invalid);
+        errorLabel.setToolTipText(invalid ? message : null);
+        dateField.getAccessibleContext().setAccessibleDescription(invalid ? message : null);
+        if (invalid) {
+            dateField.setBorder(BorderFactory.createLineBorder(ERROR_COLOR, 2));
+            dateField.setToolTipText(message);
+        } else {
+            markInputValid();
+        }
+    }
+
     public void setSelectedDate(LocalDate date) {
         selectedDate = date;
         dateField.setText(DISPLAY_FORMAT.format(date));
@@ -128,8 +158,7 @@ public final class DatePickerPanel extends JPanel {
             calendar.setSelectedDate(date);
             return true;
         } catch (DateTimeParseException e) {
-            dateField.setBorder(BorderFactory.createLineBorder(ERROR_COLOR, 2));
-            dateField.setToolTipText("请输入有效日期，例如 2026-09-01");
+            showValidationError(true, "请输入有效日期，例如 2026-09-01");
             return false;
         }
     }
@@ -137,6 +166,7 @@ public final class DatePickerPanel extends JPanel {
     private void markInputValid() {
         dateField.setBorder(normalFieldBorder);
         dateField.setToolTipText("可输入 yyyy-MM-dd，也可点击右侧按钮选择日期");
+        errorLabel.setVisible(false);
     }
 
     private void selectFromCalendar(LocalDate date) {
@@ -207,7 +237,6 @@ public final class DatePickerPanel extends JPanel {
             titleButton.setFont(titleButton.getFont().deriveFont(Font.BOLD));
             titleButton.setBorderPainted(false);
             titleButton.setContentAreaFilled(false);
-            titleButton.setFocusPainted(false);
             header.add(leftButtons, BorderLayout.WEST);
             header.add(titleButton, BorderLayout.CENTER);
             header.add(rightButtons, BorderLayout.EAST);
@@ -393,13 +422,11 @@ public final class DatePickerPanel extends JPanel {
 
         private static void configureNavigationButton(JButton button) {
             button.setMargin(new Insets(1, 7, 1, 7));
-            button.setFocusPainted(false);
         }
 
         private static JButton calendarButton(String text) {
             JButton button = new JButton(text);
             button.setMargin(new Insets(0, 0, 0, 0));
-            button.setFocusPainted(false);
             return button;
         }
 
