@@ -62,7 +62,7 @@ if errorlevel 1 (
 )
 echo.
 
-if exist "src\test\java" (
+if exist "test\java" (
     echo Compiling and running tests...
     mkdir "out-test"
     rem Compile tests with sources in one invocation. This also avoids classpath
@@ -71,7 +71,7 @@ if exist "src\test\java" (
         src\main\java\com\firefly\*.java ^
         src\main\java\com\firefly\core\*.java ^
         src\main\java\com\firefly\ui\*.java ^
-        src\test\java\com\firefly\*.java
+        test\java\com\firefly\*.java
     if errorlevel 1 (
         echo [ERROR] Test compilation failed.
         pause

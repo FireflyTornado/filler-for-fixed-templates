@@ -6,6 +6,7 @@ import com.firefly.core.VariableInputState;
 
 import javax.swing.*;
 import javax.swing.table.DefaultTableModel;
+import javax.swing.table.TableCellRenderer;
 import java.awt.*;
 import java.awt.event.KeyEvent;
 import java.util.ArrayList;
@@ -47,6 +48,8 @@ public final class TemplateHelpDialog extends JDialog {
         current.setAutoCreateRowSorter(true);
         current.setFillsViewportHeight(true);
         current.setAutoResizeMode(JTable.AUTO_RESIZE_LAST_COLUMN);
+        current.setDefaultRenderer(Object.class, new WrappingCellRenderer());
+        UiFontManager.updateTableRowHeight(current);
         tabs.addTab("当前模板变量", new JScrollPane(current));
         add(tabs);
         getRootPane().registerKeyboardAction(e -> setVisible(false),
@@ -116,7 +119,30 @@ public final class TemplateHelpDialog extends JDialog {
         area.setWrapStyleWord(true);
         area.setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 12));
         area.setCaretPosition(0);
+        UiFontManager.registerReadingComponent(area, "TextArea.font");
         return new JScrollPane(area);
+    }
+
+    private static final class WrappingCellRenderer extends JTextArea implements TableCellRenderer {
+        private WrappingCellRenderer() {
+            setLineWrap(true);
+            setWrapStyleWord(true);
+            setOpaque(true);
+            setBorder(BorderFactory.createEmptyBorder(3, 4, 3, 4));
+        }
+
+        @Override public Component getTableCellRendererComponent(JTable table, Object value,
+                boolean selected, boolean focused, int row, int column) {
+            setText(value == null ? "" : value.toString());
+            setFont(table.getFont());
+            setForeground(selected ? table.getSelectionForeground() : table.getForeground());
+            setBackground(selected ? table.getSelectionBackground() : table.getBackground());
+            setSize(Math.max(1, table.getColumnModel().getColumn(column).getWidth()), Short.MAX_VALUE);
+            int height = Math.max(table.getFontMetrics(table.getFont()).getHeight() + 8,
+                    getPreferredSize().height);
+            if (table.getRowHeight(row) != height) table.setRowHeight(row, height);
+            return this;
+        }
     }
 
     private static String syntaxText() {

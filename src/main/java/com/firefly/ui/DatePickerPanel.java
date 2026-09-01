@@ -7,6 +7,7 @@ import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
 import javax.swing.JTextField;
 import javax.swing.SwingConstants;
+import javax.swing.UIManager;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import java.awt.BorderLayout;
@@ -14,6 +15,7 @@ import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Font;
+import java.awt.FontMetrics;
 import java.awt.GridLayout;
 import java.awt.Insets;
 import java.awt.event.FocusAdapter;
@@ -148,6 +150,12 @@ public final class DatePickerPanel extends JPanel {
         changeListener = listener == null ? () -> { } : listener;
     }
 
+    public void refreshForFont() {
+        calendar.refreshForFont();
+        revalidate();
+        repaint();
+    }
+
     private boolean commitInput() {
         String text = dateField.getText().trim();
         try {
@@ -220,7 +228,7 @@ public final class DatePickerPanel extends JPanel {
             this.displayedMonth = YearMonth.from(selectedDate);
             this.onDateSelected = onDateSelected;
             setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
-            setPreferredSize(new Dimension(340, 245));
+            refreshForFont();
 
             JPanel header = new JPanel(new BorderLayout(4, 0));
             JPanel leftButtons = new JPanel(new GridLayout(1, 2, 2, 0));
@@ -267,6 +275,16 @@ public final class DatePickerPanel extends JPanel {
             }
             calendarPanel.revalidate();
             calendarPanel.repaint();
+        }
+
+        private void refreshForFont() {
+            Font font = UIManager.getFont("Button.font");
+            if (font == null) font = getFont();
+            FontMetrics metrics = getFontMetrics(font);
+            int cellWidth = Math.max(metrics.stringWidth("8888") + 12, metrics.getHeight() * 2);
+            int width = Math.max(340, cellWidth * 8 + 40);
+            int height = Math.max(245, (metrics.getHeight() + 12) * 8 + 25);
+            setPreferredSize(new Dimension(width, height));
         }
 
         private void rebuildDayView() {

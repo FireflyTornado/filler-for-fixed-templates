@@ -76,6 +76,7 @@ public final class VariableTypeConversionDialog extends JDialog {
         source.setEditable(false);
         source.setLineWrap(true);
         source.setWrapStyleWord(true);
+        UiFontManager.registerReadingComponent(source, "TextArea.font");
         JPanel content = new JPanel(new GridLayout(2, 1, 6, 6));
         JPanel sourcePanel = new JPanel(new BorderLayout(4, 4));
         sourcePanel.add(new JLabel("原始内容（将继续保留）："), BorderLayout.NORTH);

@@ -61,22 +61,17 @@ public final class TemplateConfigStore {
                     continue;
                 }
                 String typeName = data.get("type") instanceof String text ? text : null;
-                String value = data.get("value") instanceof String text ? text : "";
-                Map<VariableType, String> drafts = new java.util.EnumMap<>(VariableType.class);
-                boolean hasDraftsField = data.get("drafts") instanceof Map<?, ?>;
-                if (data.get("drafts") instanceof Map<?, ?> draftData) {
-                    for (Map.Entry<?, ?> draft : draftData.entrySet()) {
-                        if (draft.getKey() instanceof String draftType
-                                && draft.getValue() instanceof String draftValue) {
-                            VariableType parsedDraftType = VariableType.fromName(draftType, null);
-                            if (parsedDraftType != null) drafts.put(parsedDraftType, draftValue);
-                        }
-                    }
-                }
                 VariableType parsedType = VariableType.fromName(typeName, null);
-                if (parsedType != null && !hasDraftsField) drafts.putIfAbsent(parsedType, value);
+                String oldValue = data.get("value") instanceof String text ? text : "";
+                Map<VariableType, String> sessionValues = new java.util.EnumMap<>(VariableType.class);
+                readLegacyValues(data.get("drafts"), sessionValues);
+                // valuesByType 是较新的旧字段，冲突时优先于 drafts。
+                readLegacyValues(data.get("valuesByType"), sessionValues);
+                String currentValue = parsedType == null
+                        ? oldValue : sessionValues.getOrDefault(parsedType, oldValue);
+                if (parsedType != null) sessionValues.put(parsedType, currentValue);
                 config.variables().put(name, new TemplateConfig.Entry(
-                        parsedType, value, drafts));
+                        parsedType, currentValue, sessionValues));
             }
         } catch (Exception ignored) {
             // 此模板的配置损坏只使该模板回退默认值。
@@ -89,14 +84,14 @@ public final class TemplateConfigStore {
         TemplateConfig merged = load(templateName);
         for (VariableInputState state : states.values()) {
             merged.variables().put(state.name(), new TemplateConfig.Entry(
-                    state.type(), state.value(), state.drafts()));
+                    state.type(), state.value()));
         }
         saveConfig(merged);
     }
 
     public void saveConfig(TemplateConfig config) throws IOException {
         Map<String, Object> root = new LinkedHashMap<>();
-        root.put("version", 1);
+        root.put("version", 2);
         root.put("template", config.templateName());
         Map<String, Object> variables = new LinkedHashMap<>();
         for (Map.Entry<String, TemplateConfig.Entry> item : config.variables().entrySet()) {
@@ -105,14 +100,20 @@ public final class TemplateConfigStore {
                     ? VariableType.NUMBER : item.getValue().type();
             data.put("type", type.name());
             data.put("value", item.getValue().value());
-            Map<String, Object> drafts = new LinkedHashMap<>();
-            for (Map.Entry<VariableType, String> draft : item.getValue().drafts().entrySet()) {
-                drafts.put(draft.getKey().name(), draft.getValue());
-            }
-            data.put("drafts", drafts);
             variables.put(item.getKey(), data);
         }
         root.put("variables", variables);
         AtomicConfigWriter.write(configFileForTemplate(config.templateName()), JsonData.stringify(root));
+    }
+
+    private static void readLegacyValues(Object value, Map<VariableType, String> destination) {
+        if (!(value instanceof Map<?, ?> values)) return;
+        for (Map.Entry<?, ?> draft : values.entrySet()) {
+            if (draft.getKey() instanceof String typeName
+                    && draft.getValue() instanceof String text) {
+                VariableType type = VariableType.fromName(typeName, null);
+                if (type != null) destination.put(type, text);
+            }
+        }
     }
 }

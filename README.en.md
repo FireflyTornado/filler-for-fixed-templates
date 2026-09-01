@@ -10,7 +10,8 @@ A lightweight Java Swing desktop tool with a unified variable system for filling
 - **Unified variable input** → `{{variable}}` is the recommended syntax, and each variable can be Numeric, Short Text, or Multi-line Text; a blank numeric value is treated as 0
 - **Legacy syntax compatibility** → existing `[[string]]` placeholders keep working unchanged and default to Multi-line Text when no saved type exists
 - **Compact multi-line editing** → multi-line values use a one-line preview in the main window and open in a modal “Expand…” editor
-- **Per-type draft protection** → Numeric, Short Text, and Multi-line Text keep independent drafts, so switching types or cancelling a lossy conversion never discards the original content
+- **Session draft protection** → Numeric, Short Text, and Multi-line Text keep independent values for the current template editing session; only the active type and value persist across sessions
+- **Adjustable UI text** → Follow System, Comfortable, Large, and Extra Large presets build on the Windows/JDK DPI-aware system fonts without applying DPI twice
 - **Expression type locking** → a `=` prefix denotes an arithmetic expression, e.g. `{{=variable1/variable2}}`; referenced variables are automatically locked to Numeric, with support for `+ - * / **` and parentheses
 - **Calendar base date** → all built-in date variables use the calendar selection as their base; every launch starts with the current system date, and you can type `yyyy-MM-dd` or use the popup calendar to change it
 - **Complete date derivation** → supports yesterday/today/tomorrow, previous/current/next month, previous/current/next year, and the first/last day of the current month, with automatic month, year, and leap-year handling
@@ -103,7 +104,7 @@ Building requires a JDK (with `javac` and `jar`). The build script runs the regr
         ├── VariableTypeConversionDialog.java # Confirmation UI for lossy type conversions
         ├── ValidationIssueManager.java # Live issue collection and cyclic navigation
         └── TemplateHelpDialog.java  # Modeless syntax, date-variable, and current-template help
-└── src/test/java/com/firefly/
+└── test/java/com/firefly/         # Root-level test sources (kept outside src)
     └── TemplateFeatureTests.java # Regression tests for unified variables, config safety, and migration
 ```
 

@@ -34,6 +34,13 @@ public final class AppConfigStore {
                 config.setPreviewResultDividerLocation(
                         positiveInt(layout.get("previewResultDividerLocation")));
             }
+            Object appearanceValue = root.get("appearance");
+            if (appearanceValue instanceof Map<?, ?> appearance) {
+                Object fontScale = appearance.get("fontScale");
+                if (fontScale instanceof Number number) {
+                    config.setFontScale(number.floatValue());
+                }
+            }
         } catch (Exception ignored) {
             // 单个字段或整个文件损坏时使用默认配置。
         }
@@ -49,6 +56,9 @@ public final class AppConfigStore {
         layout.put("mainDividerLocation", config.mainDividerLocation());
         layout.put("previewResultDividerLocation", config.previewResultDividerLocation());
         root.put("layout", layout);
+        Map<String, Object> appearance = new LinkedHashMap<>();
+        appearance.put("fontScale", config.fontScale());
+        root.put("appearance", appearance);
         AtomicConfigWriter.write(configFile, JsonData.stringify(root));
     }
 

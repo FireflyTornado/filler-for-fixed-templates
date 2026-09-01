@@ -8,6 +8,8 @@ import com.firefly.ui.IssueSeverity;
 import com.firefly.ui.TemplateHelpDialog;
 import com.firefly.ui.ValidationIssue;
 import com.firefly.ui.ValidationIssueManager;
+import com.firefly.ui.FontScalePreset;
+import com.firefly.ui.UiFontManager;
 
 import javax.swing.*;
 import javax.swing.Timer;
@@ -44,7 +46,7 @@ public final class TemplateToolApp extends JFrame {
     private DatePickerPanel datePicker;
     private VariableInputPanel variablePanel;
     private ResultPanel resultPanel;
-    private JButton newBtn, saveTplBtn, generateBtn, copyBtn, saveResultBtn, helpBtn;
+    private JButton newBtn, saveTplBtn, generateBtn, copyBtn, saveResultBtn, helpBtn, fontScaleBtn;
     private TitledBorder templateBorder;
     private JPanel templatePanel;
     private JSplitPane mainSplit, previewResultSplit;
@@ -53,9 +55,12 @@ public final class TemplateToolApp extends JFrame {
     private boolean currentTemplateSaved, docxMode, resultValid, programmaticUpdate;
     private Path currentDocxResult;
     private Map<String, VariableInputState> variableStates = new LinkedHashMap<>();
+    /** 包含当前模板会话内暂时从解析结果消失的变量；切换模板后整体销毁。 */
+    private final Map<String, VariableInputState> sessionVariableStates = new LinkedHashMap<>();
     private TemplateConfig persistedTemplateConfig = new TemplateConfig("");
     private TemplateHelpDialog helpDialog;
     private String fullStatusText = " ";
+    private FontScalePreset fontScalePreset;
 
     public TemplateToolApp(Path appDir) {
         super("模板填充工具");
@@ -64,6 +69,9 @@ public final class TemplateToolApp extends JFrame {
         templateConfigStore = new TemplateConfigStore(appDir);
         appConfigExisted = appConfigStore.exists();
         appConfig = appConfigStore.load();
+        fontScalePreset = FontScalePreset.closest(appConfig.fontScale());
+        appConfig.setFontScale(fontScalePreset.scale());
+        UiFontManager.applyScale(fontScalePreset.scale());
         templateSyncTimer = new Timer(400, e -> synchronizeEditedTemplate());
         templateSyncTimer.setRepeats(false);
         templateConfigSaveTimer = new Timer(700, e -> saveCurrentTemplateConfig(false));
@@ -98,8 +106,7 @@ public final class TemplateToolApp extends JFrame {
         statusLabel.setBorder(BorderFactory.createCompoundBorder(
                 BorderFactory.createMatteBorder(1, 0, 0, 0, Color.LIGHT_GRAY),
                 BorderFactory.createEmptyBorder(4, 8, 2, 8)));
-        statusLabel.setPreferredSize(new Dimension(10, 27));
-        statusLabel.setMinimumSize(new Dimension(0, 27));
+        statusLabel.setMinimumSize(new Dimension(0, statusLabel.getPreferredSize().height));
         statusLabel.addComponentListener(new java.awt.event.ComponentAdapter() {
             @Override public void componentResized(java.awt.event.ComponentEvent e) { refreshStatusLabel(); }
         });
@@ -116,6 +123,7 @@ public final class TemplateToolApp extends JFrame {
         templateText = new JTextArea();
         templateText.setLineWrap(true);
         templateText.setWrapStyleWord(true);
+        UiFontManager.registerReadingComponent(templateText, "TextArea.font");
         templatePanel.add(new JScrollPane(templateText));
 
         JPanel resultArea = new JPanel(new BorderLayout(4, 4));
@@ -153,16 +161,22 @@ public final class TemplateToolApp extends JFrame {
         JButton choose = new JButton("选择模板文件…"), open = new JButton("打开文件夹");
         newBtn = new JButton("新建模板"); saveTplBtn = new JButton("保存模板");
         helpBtn = new JButton("帮助");
+        fontScaleBtn = new JButton("字号 ▾");
+        fontScaleBtn.setMnemonic('Z');
+        fontScaleBtn.setToolTipText("调节界面字号（Ctrl+加号/减号，Ctrl+0 跟随系统）");
+        fontScaleBtn.getAccessibleContext().setAccessibleName("调节界面字号");
         helpBtn.setMnemonic('H');
         helpBtn.setToolTipText("模板变量语法和当前模板变量（F1）");
         helpBtn.getAccessibleContext().setAccessibleName("打开模板变量帮助");
-        buttons.add(choose); buttons.add(newBtn); buttons.add(saveTplBtn); buttons.add(open); buttons.add(helpBtn);
+        buttons.add(choose); buttons.add(newBtn); buttons.add(saveTplBtn);
+        buttons.add(open); buttons.add(fontScaleBtn); buttons.add(helpBtn);
         toolbar.add(buttons, BorderLayout.SOUTH);
         choose.addActionListener(e -> chooseTemplate());
         newBtn.addActionListener(e -> newTemplate());
         saveTplBtn.addActionListener(e -> saveTemplate());
         open.addActionListener(e -> openTemplatesFolder());
         helpBtn.addActionListener(e -> showHelp());
+        fontScaleBtn.addActionListener(e -> showFontScaleMenu());
         return toolbar;
     }
 
@@ -173,6 +187,7 @@ public final class TemplateToolApp extends JFrame {
         right.add(datePicker, BorderLayout.NORTH);
         variablePanel = new VariableInputPanel(issueManager);
         variablePanel.setStatusListener(this::setStatus);
+        variablePanel.setCommitListener(() -> saveCurrentTemplateConfig(false));
         right.add(variablePanel);
         return right;
     }
@@ -209,6 +224,22 @@ public final class TemplateToolApp extends JFrame {
         bind(root, KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_F1, 0), "help", this::showHelp);
         bind(root, KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_F4, 0),
                 "nextError", variablePanel::locateNextIssue);
+        bind(root, KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_EQUALS,
+                java.awt.event.KeyEvent.CTRL_DOWN_MASK), "fontLarger", this::increaseFontScale);
+        bind(root, KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_EQUALS,
+                java.awt.event.KeyEvent.CTRL_DOWN_MASK | java.awt.event.KeyEvent.SHIFT_DOWN_MASK),
+                "fontLargerShift", this::increaseFontScale);
+        bind(root, KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_ADD,
+                java.awt.event.KeyEvent.CTRL_DOWN_MASK), "fontLargerNumpad", this::increaseFontScale);
+        bind(root, KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_PLUS,
+                java.awt.event.KeyEvent.CTRL_DOWN_MASK), "fontLargerPlus", this::increaseFontScale);
+        bind(root, KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_MINUS,
+                java.awt.event.KeyEvent.CTRL_DOWN_MASK), "fontSmaller", this::decreaseFontScale);
+        bind(root, KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_SUBTRACT,
+                java.awt.event.KeyEvent.CTRL_DOWN_MASK), "fontSmallerNumpad", this::decreaseFontScale);
+        bind(root, KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_0,
+                java.awt.event.KeyEvent.CTRL_DOWN_MASK), "fontSystem",
+                () -> setFontScalePreset(FontScalePreset.SYSTEM));
     }
 
     private static void bind(JRootPane root, KeyStroke key, String name, Runnable action) {
@@ -269,7 +300,7 @@ public final class TemplateToolApp extends JFrame {
     private void rebuildVariableStates(TemplateParser.ParsedTemplate parsed) {
         Map<String, VariableInputState> next = new LinkedHashMap<>();
         for (TemplateParser.VariableSpec spec : parsed.variables()) {
-            VariableInputState current = variableStates.get(spec.name());
+            VariableInputState current = sessionVariableStates.get(spec.name());
             if (current != null) {
                 next.put(spec.name(), current.copyFor(spec));
             } else {
@@ -278,11 +309,13 @@ public final class TemplateToolApp extends JFrame {
                         ? spec.defaultType() : saved.type();
                 if (spec.numericLocked()) type = VariableType.NUMBER;
                 next.put(spec.name(), new VariableInputState(spec.name(), type,
-                        saved == null ? "" : saved.value(), saved == null ? Map.of() : saved.drafts(),
+                        saved == null ? "" : saved.value(),
+                        saved == null ? Map.of() : saved.legacySessionValues(),
                         spec.numericLocked(),
                         spec.legacySyntax(), spec.braceSyntax()));
             }
         }
+        sessionVariableStates.putAll(next);
         variableStates = next;
         programmaticUpdate = true;
         try { variablePanel.rebuild(variableStates); }
@@ -291,14 +324,15 @@ public final class TemplateToolApp extends JFrame {
     }
 
     private void loadTemplate(String name) {
-        templateConfigSaveTimer.stop();
-        saveCurrentTemplateConfig(false);
         boolean word = DocxProcessor.isDocxName(name);
         String text;
         try {
             text = word ? DocxProcessor.extractText(templateStore.templateFile(name))
                     : templateStore.readTemplate(name);
         } catch (IOException e) { showError("无法读取模板文件：\n" + e, "读取失败"); return; }
+        templateConfigSaveTimer.stop();
+        if (!currentTemplateName.isEmpty() && !saveCurrentTemplateConfig(true)) return;
+        sessionVariableStates.clear();
         currentTemplateName = name; currentTemplate = text; lastDiskContent = text;
         issueManager.clear();
         currentTemplateSaved = true;
@@ -359,7 +393,8 @@ public final class TemplateToolApp extends JFrame {
         String existing = findNameIgnoreCase(templateStore.listTemplateNames(), name);
         if (existing != null) { loadTemplate(existing); setStatus("该模板已存在，已为你打开：" + existing); return; }
         templateConfigSaveTimer.stop();
-        saveCurrentTemplateConfig(false);
+        if (!saveCurrentTemplateConfig(true)) return;
+        sessionVariableStates.clear();
         currentTemplateName = name; currentTemplate = ""; lastDiskContent = "";
         issueManager.clear();
         currentTemplateSaved = false; persistedTemplateConfig = templateConfigStore.load(name);
@@ -398,10 +433,13 @@ public final class TemplateToolApp extends JFrame {
 
     private void closeApplication() {
         if (!confirmUnsaved("退出")) return;
-        templateConfigSaveTimer.stop(); saveCurrentTemplateConfig(true);
+        templateConfigSaveTimer.stop();
+        if (!saveCurrentTemplateConfig(true)) return;
         appConfig.setMainDividerLocation(mainSplit.getDividerLocation());
         appConfig.setPreviewResultDividerLocation(previewResultSplit.getDividerLocation());
-        saveAppConfig(true); dispose(); System.exit(0);
+        saveAppConfig(true);
+        sessionVariableStates.clear();
+        dispose(); System.exit(0);
     }
 
     private void setTemplateText(String text) {
@@ -425,14 +463,16 @@ public final class TemplateToolApp extends JFrame {
         catch (IOException e) { setStatus("程序配置保存失败：" + e.getMessage()); if (notify) showWarning("程序配置保存失败：\n" + e, "配置未保存"); }
     }
 
-    private void saveCurrentTemplateConfig(boolean notify) {
-        if (currentTemplateName.isEmpty()) return;
+    private boolean saveCurrentTemplateConfig(boolean notify) {
+        if (currentTemplateName.isEmpty()) return true;
         try {
-            templateConfigStore.save(currentTemplateName, variableStates);
+            templateConfigStore.save(currentTemplateName, sessionVariableStates);
             persistedTemplateConfig = templateConfigStore.load(currentTemplateName);
+            return true;
         } catch (IOException | IllegalArgumentException e) {
             setStatus("模板变量配置保存失败：" + e.getMessage());
             if (notify) showWarning("模板变量配置保存失败：\n" + e, "配置未保存");
+            return false;
         }
     }
 
@@ -592,6 +632,35 @@ public final class TemplateToolApp extends JFrame {
                     () -> Map.copyOf(variableStates));
         }
         helpDialog.showOrRefresh();
+    }
+
+    private void showFontScaleMenu() {
+        JPopupMenu menu = new JPopupMenu();
+        ButtonGroup group = new ButtonGroup();
+        for (FontScalePreset preset : FontScalePreset.values()) {
+            JRadioButtonMenuItem item = new JRadioButtonMenuItem(preset.toString(), preset == fontScalePreset);
+            item.addActionListener(e -> setFontScalePreset(preset));
+            group.add(item);
+            menu.add(item);
+        }
+        menu.show(fontScaleBtn, 0, fontScaleBtn.getHeight());
+    }
+
+    private void increaseFontScale() { setFontScalePreset(fontScalePreset.larger()); }
+    private void decreaseFontScale() { setFontScalePreset(fontScalePreset.smaller()); }
+
+    private void setFontScalePreset(FontScalePreset preset) {
+        if (preset == null || preset == fontScalePreset) return;
+        fontScalePreset = preset;
+        appConfig.setFontScale(preset.scale());
+        UiFontManager.applyScale(preset.scale());
+        UiFontManager.refreshOpenWindows();
+        datePicker.refreshForFont();
+        refreshStatusLabel();
+        revalidate();
+        repaint();
+        saveAppConfig(false);
+        setStatus("界面字号已设为“" + preset + "”。");
     }
 
     private void refreshAllValidation() {

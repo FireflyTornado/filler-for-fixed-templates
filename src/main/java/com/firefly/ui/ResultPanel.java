@@ -19,6 +19,7 @@ public final class ResultPanel extends JPanel {
         area.setEditable(false);
         area.setLineWrap(true);
         area.setWrapStyleWord(true);
+        UiFontManager.registerReadingComponent(area, "TextArea.font");
         JScrollPane scroll = new JScrollPane(area);
         add(scroll, BorderLayout.CENTER);
     }
@@ -31,4 +32,6 @@ public final class ResultPanel extends JPanel {
         area.setText(text);
         area.setCaretPosition(0);
     }
+
+    public JTextArea textArea() { return area; }
 }

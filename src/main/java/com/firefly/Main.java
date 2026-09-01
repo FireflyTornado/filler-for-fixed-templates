@@ -2,6 +2,7 @@ package com.firefly;
 
 import javax.swing.SwingUtilities;
 import javax.swing.UIManager;
+import com.firefly.ui.UiFontManager;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -17,15 +18,13 @@ public final class Main {
     }
 
     public static void main(String[] args) {
-        // 高 DPI 下让界面更清晰（JDK9+ 默认已适配，这里兼容旧 JDK）
-        System.setProperty("sun.java2d.dpiaware", "true");
-
         SwingUtilities.invokeLater(() -> {
             try {
                 UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
             } catch (Exception ignored) {
                 // 保持默认外观
             }
+            UiFontManager.initialize();
             TemplateToolApp app = new TemplateToolApp(appDir());
             app.setVisible(true);
         });

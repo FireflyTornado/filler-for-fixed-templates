@@ -32,6 +32,7 @@ public final class MultilineEditorDialog extends JDialog {
         textArea.setText(initialValue);
         textArea.setLineWrap(true);
         textArea.setWrapStyleWord(true);
+        UiFontManager.registerReadingComponent(textArea, "TextArea.font");
         UndoManager undo = new UndoManager();
         textArea.getDocument().addUndoableEditListener(undo);
         textArea.getInputMap().put(KeyStroke.getKeyStroke(KeyEvent.VK_Z,

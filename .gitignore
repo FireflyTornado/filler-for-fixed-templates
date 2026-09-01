@@ -22,11 +22,11 @@ config.json
 Config/
 Templates/
 
-# ---- 测试----
-/test/
-
 # ---- 日志 ----
 *.log
+
+# ---- 测试 ----
+test/
 
 # ---- 操作系统 ----
 Thumbs.db

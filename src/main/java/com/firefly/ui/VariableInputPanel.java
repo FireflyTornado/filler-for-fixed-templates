@@ -24,6 +24,7 @@ public final class VariableInputPanel extends JPanel {
     private final ValidationIssueManager issues;
     private Map<String, VariableInputState> states = new LinkedHashMap<>();
     private Runnable changeListener = () -> { };
+    private Runnable commitListener = () -> { };
     private Consumer<String> statusListener = text -> { };
     private boolean rebuilding;
 
@@ -51,6 +52,7 @@ public final class VariableInputPanel extends JPanel {
         return row != null && row.warning.isVisible();
     }
     public void setChangeListener(Runnable listener) { changeListener = listener == null ? () -> { } : listener; }
+    public void setCommitListener(Runnable listener) { commitListener = listener == null ? () -> { } : listener; }
     public void setStatusListener(Consumer<String> listener) { statusListener = listener == null ? text -> { } : listener; }
 
     public void rebuild(Map<String, VariableInputState> newStates) {
@@ -90,18 +92,15 @@ public final class VariableInputPanel extends JPanel {
     }
 
     private void addRow(VariableInputState state, GridBagConstraints gc, int order) {
-        JLabel name = new JLabel(ellipsizeName(state.name()));
-        name.setPreferredSize(new Dimension(70, 25));
+        JLabel name = new JLabel(state.name());
         name.setToolTipText(state.name() + " — " + syntaxTooltip(state));
         JComboBox<VariableType> type = new JComboBox<>(VariableType.values());
         type.setSelectedItem(state.type());
-        type.setPreferredSize(new Dimension(90, 26));
+        type.setPrototypeDisplayValue(VariableType.MULTILINE_TEXT);
         type.setEnabled(!state.numericLocked());
         if (state.numericLocked()) type.setToolTipText("参与表达式，类型锁定为数值");
-        JTextField field = new JTextField();
-        field.setPreferredSize(new Dimension(60, 26));
+        JTextField field = new JTextField(8);
         JButton expand = new JButton("展开…");
-        expand.setPreferredSize(new Dimension(58, 26));
         expand.setMargin(new Insets(2, 6, 2, 6));
         JLabel warning = new JLabel("⚠");
         warning.setVisible(false);
@@ -114,6 +113,7 @@ public final class VariableInputPanel extends JPanel {
         type.getAccessibleContext().setAccessibleName("变量“" + state.name() + "”的类型");
         expand.getAccessibleContext().setAccessibleName("编辑变量“" + state.name() + "”的多行文本");
         configureValueField(row);
+        installSessionValueMenu(row, name);
 
         gc.gridx = 0; gc.weightx = 0; gc.fill = GridBagConstraints.NONE; rows.add(name, gc);
         gc.gridx = 1; rows.add(type, gc);
@@ -134,6 +134,27 @@ public final class VariableInputPanel extends JPanel {
                 if (e.getClickCount() == 2 && row.state.type() == VariableType.MULTILINE_TEXT) editMultiline(row);
             }
         });
+    }
+
+    private void installSessionValueMenu(Row row, JLabel name) {
+        JPopupMenu menu = new JPopupMenu();
+        JMenuItem clearOthers = new JMenuItem("清除其他类型内容");
+        clearOthers.addActionListener(e -> {
+            row.state.clearOtherTypeValues();
+            statusListener.accept("已清除变量“" + row.state.name() + "”的其他类型内容。");
+        });
+        menu.add(clearOthers);
+        menu.addPopupMenuListener(new javax.swing.event.PopupMenuListener() {
+            public void popupMenuWillBecomeVisible(javax.swing.event.PopupMenuEvent e) {
+                clearOthers.setEnabled(row.state.hasOtherTypeValues());
+            }
+            public void popupMenuWillBecomeInvisible(javax.swing.event.PopupMenuEvent e) { }
+            public void popupMenuCanceled(javax.swing.event.PopupMenuEvent e) { }
+        });
+        name.setComponentPopupMenu(menu);
+        row.type.setComponentPopupMenu(menu);
+        row.field.setComponentPopupMenu(menu);
+        row.expand.setComponentPopupMenu(menu);
     }
 
     private void configureValueField(Row row) {
@@ -159,6 +180,7 @@ public final class VariableInputPanel extends JPanel {
         row.state.activateType(target, initial);
         configureValueField(row);
         changeListener.run();
+        commitListener.run();
         row.type.requestFocusInWindow();
     }
 
@@ -192,6 +214,7 @@ public final class VariableInputPanel extends JPanel {
             row.state.setValue(edited);
             configureValueField(row);
             changeListener.run();
+            commitListener.run();
         }
         row.expand.requestFocusInWindow();
     }
@@ -297,14 +320,6 @@ public final class VariableInputPanel extends JPanel {
         String syntax = state.braceSyntax() && state.legacyMultilineSyntax() ? "{{变量}} 与 [[变量]]"
                 : (state.legacyMultilineSyntax() ? "旧格式 [[变量]]" : "推荐格式 {{变量}}");
         return state.numericLocked() ? syntax + "；表达式使用，锁定为数值" : syntax;
-    }
-
-    private String ellipsizeName(String name) {
-        FontMetrics metrics = getFontMetrics(getFont());
-        if (metrics.stringWidth(name) <= 66) return name;
-        int end = name.length();
-        while (end > 0 && metrics.stringWidth(name.substring(0, end) + "…") > 66) end--;
-        return name.substring(0, end) + "…";
     }
 
     private static Color errorBackground(Color normal) {
