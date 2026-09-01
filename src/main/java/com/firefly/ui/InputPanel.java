@@ -7,6 +7,8 @@ import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
 import javax.swing.JTextField;
 import javax.swing.text.JTextComponent;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Dimension;
@@ -33,6 +35,7 @@ public final class InputPanel extends JPanel {
     private final boolean stringMode;
     private final ScrollablePanel inner = new ScrollablePanel(new GridBagLayout());
     private final Map<String, JTextComponent> inputs = new LinkedHashMap<>();
+    private Runnable changeListener = () -> { };
 
     public InputPanel(String title, boolean stringMode) {
         super(new BorderLayout());
@@ -114,6 +117,22 @@ public final class InputPanel extends JPanel {
                 if (value != null) {
                     field.setText(value);
                 }
+                field.getDocument().addDocumentListener(new DocumentListener() {
+                    @Override
+                    public void insertUpdate(DocumentEvent e) {
+                        changeListener.run();
+                    }
+
+                    @Override
+                    public void removeUpdate(DocumentEvent e) {
+                        changeListener.run();
+                    }
+
+                    @Override
+                    public void changedUpdate(DocumentEvent e) {
+                        changeListener.run();
+                    }
+                });
                 inputs.put(name, field);
                 row++;
             }
@@ -148,6 +167,16 @@ public final class InputPanel extends JPanel {
             values.put(e.getKey(), e.getValue().getText());
         }
         return values;
+    }
+
+    /** 当前输入项名称（按模板中的出现顺序）。 */
+    public List<String> getInputNames() {
+        return List.copyOf(inputs.keySet());
+    }
+
+    /** 用户修改任一输入框时调用。 */
+    public void setChangeListener(Runnable listener) {
+        changeListener = listener == null ? () -> { } : listener;
     }
 
     /** 把给定变量对应的输入框标成浅红底（仅变量模式）。 */

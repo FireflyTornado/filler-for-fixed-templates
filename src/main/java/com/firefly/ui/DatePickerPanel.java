@@ -7,6 +7,8 @@ import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
 import javax.swing.JTextField;
 import javax.swing.SwingConstants;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Dimension;
@@ -43,6 +45,7 @@ public final class DatePickerPanel extends JPanel {
     private final PopupCalendar calendar;
     private final javax.swing.border.Border normalFieldBorder;
     private LocalDate selectedDate;
+    private Runnable changeListener = () -> { };
 
     public DatePickerPanel() {
         super(new BorderLayout(10, 0));
@@ -74,6 +77,22 @@ public final class DatePickerPanel extends JPanel {
             popup.setVisible(false);
         });
         dateField.addActionListener(e -> commitInput());
+        dateField.getDocument().addDocumentListener(new DocumentListener() {
+            @Override
+            public void insertUpdate(DocumentEvent e) {
+                changeListener.run();
+            }
+
+            @Override
+            public void removeUpdate(DocumentEvent e) {
+                changeListener.run();
+            }
+
+            @Override
+            public void changedUpdate(DocumentEvent e) {
+                changeListener.run();
+            }
+        });
         dateField.addFocusListener(new FocusAdapter() {
             @Override
             public void focusLost(FocusEvent e) {
@@ -92,6 +111,11 @@ public final class DatePickerPanel extends JPanel {
         dateField.setText(DISPLAY_FORMAT.format(date));
         markInputValid();
         calendar.setSelectedDate(date);
+    }
+
+    /** 日期文本、日历选择或“回到今日”导致日期变化时调用。 */
+    public void setChangeListener(Runnable listener) {
+        changeListener = listener == null ? () -> { } : listener;
     }
 
     private boolean commitInput() {

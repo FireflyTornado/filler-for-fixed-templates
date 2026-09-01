@@ -8,6 +8,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 import java.util.stream.Stream;
 
 /**
@@ -42,6 +43,10 @@ public final class TemplateStore {
         try (Stream<Path> s = Files.list(templatesDir)) {
             s.filter(Files::isRegularFile)
              .filter(p -> !p.getFileName().toString().startsWith("."))
+             .filter(p -> {
+                 String name = p.getFileName().toString().toLowerCase(Locale.ROOT);
+                 return name.endsWith(".txt") || name.endsWith(".docx");
+             })
              .map(p -> p.getFileName().toString())
              .sorted(Comparator.naturalOrder())
              .forEach(names::add);

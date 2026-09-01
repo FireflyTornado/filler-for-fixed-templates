@@ -21,8 +21,11 @@ import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
+import javax.swing.Timer;
 import javax.swing.WindowConstants;
 import javax.swing.border.TitledBorder;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
 import javax.swing.filechooser.FileNameExtensionFilter;
 import java.awt.BorderLayout;
 import java.awt.Color;
@@ -46,6 +49,7 @@ import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -66,8 +70,11 @@ public final class TemplateToolApp extends JFrame {
     private ResultPanel resultPanel;
     private JLabel statusLabel;
 
-    private JButton newBtn;          // 新建模板（Word 模板模式下禁用）
+    private JButton newBtn;
     private JButton saveTplBtn;      // 保存模板（Word 模板模式下禁用）
+    private JButton generateBtn;
+    private JButton copyBtn;
+    private JButton saveResultBtn;
     private TitledBorder tplBorder;  // 模板编辑区的边框标题（随模式切换文案）
     private JPanel tplPanel;         // 模板编辑区面板（标题变化后需要重绘）
 
@@ -77,26 +84,30 @@ public final class TemplateToolApp extends JFrame {
     private Map<String, String> currentValues = new LinkedHashMap<>(); // 当前模板上次保存的输入（用于回填）
     private boolean docxMode = false;             // 当前模板是否为 Word（.docx）文档
     private Path currentDocxResult;               // 最近一次生成的 Word 结果（临时文件）
+    private boolean resultValid;
+    private boolean programmaticUpdate;
+    private boolean currentTemplateSaved;
+    private final Timer templateSyncTimer;
 
     public TemplateToolApp(Path appDir) {
         super("模板填充工具");
         this.templateStore = new TemplateStore(appDir);
         this.valuesStore = new LastValuesStore(appDir);
+        this.templateSyncTimer = new Timer(400, e -> synchronizeEditedTemplate());
+        this.templateSyncTimer.setRepeats(false);
 
         setSize(1050, 800);
         setMinimumSize(new java.awt.Dimension(660, 660));
-        // 关闭主窗口就结束整个应用。仅调用 dispose() 只能释放窗口资源；如果 AWT
-        // 或其他非守护线程仍在运行，JVM 会继续留在后台。EXIT_ON_CLOSE 会在下方
-        // 的保存逻辑执行完后正常终止 JVM，并触发 deleteOnExit/关闭钩子等清理。
-        setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
+        setDefaultCloseOperation(WindowConstants.DO_NOTHING_ON_CLOSE);
         addWindowListener(new WindowAdapter() {
             @Override
             public void windowClosing(WindowEvent e) {
-                saveLastInputs();   // 关闭前保存当前输入
+                closeApplication();
             }
         });
 
         buildUi();
+        installChangeListeners();
         initTemplates();
         setLocationRelativeTo(null);               // 窗口居中
     }
@@ -170,20 +181,22 @@ public final class TemplateToolApp extends JFrame {
         // 操作按钮
         JPanel btnRow = new JPanel(new BorderLayout(6, 0));
         JPanel btns = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
-        JButton genBtn = new JButton("生成结果");
-        JButton copyBtn = new JButton("复制结果");
-        JButton saveBtn = new JButton("保存结果到文件");
-        btns.add(genBtn);
+        generateBtn = new JButton("生成结果");
+        copyBtn = new JButton("复制结果");
+        saveResultBtn = new JButton("保存结果到文件");
+        copyBtn.setEnabled(false);
+        saveResultBtn.setEnabled(false);
+        btns.add(generateBtn);
         btns.add(copyBtn);
-        btns.add(saveBtn);
+        btns.add(saveResultBtn);
         JLabel btnNote = new JLabel("输入框只显示模板中出现的变量");
         btnNote.setForeground(Color.GRAY);
         btnRow.add(btns, BorderLayout.WEST);
         btnRow.add(btnNote, BorderLayout.EAST);
         addRow(gc, 4, 0, GridBagConstraints.HORIZONTAL, btnRow);
-        genBtn.addActionListener(e -> generate());
+        generateBtn.addActionListener(e -> generate());
         copyBtn.addActionListener(e -> copyResult());
-        saveBtn.addActionListener(e -> saveResult());
+        saveResultBtn.addActionListener(e -> saveResult());
 
         // 结果输出区
         resultPanel = new ResultPanel();
@@ -207,13 +220,83 @@ public final class TemplateToolApp extends JFrame {
 
     // ---------- 数据同步 ----------
 
-    /** 界面里的模板如果被改动过，先重建变量/字符串输入框（尽量保留已有值）。 */
-    private void syncTemplate() {
+    private void installChangeListeners() {
+        templateText.getDocument().addDocumentListener(new DocumentListener() {
+            @Override
+            public void insertUpdate(DocumentEvent e) {
+                templateEdited();
+            }
+
+            @Override
+            public void removeUpdate(DocumentEvent e) {
+                templateEdited();
+            }
+
+            @Override
+            public void changedUpdate(DocumentEvent e) {
+                templateEdited();
+            }
+        });
+        variablePanel.setChangeListener(() -> invalidateResult("内容已修改，请重新生成。"));
+        stringPanel.setChangeListener(() -> invalidateResult("内容已修改，请重新生成。"));
+        datePicker.setChangeListener(() -> {
+            if (!programmaticUpdate) {
+                invalidateResult("内容已修改，请重新生成。");
+            }
+        });
+    }
+
+    private void templateEdited() {
+        if (programmaticUpdate) {
+            return;
+        }
+        invalidateResult("内容已修改，请重新生成。");
+        updateDirtyIndicator();
+        templateSyncTimer.restart();
+    }
+
+    private void synchronizeEditedTemplate() {
         String content = templateText.getText();
         if (!content.equals(currentTemplate)) {
             currentTemplate = content;
             rebuildInputs(content);
         }
+    }
+
+    /** 界面里的模板如果被改动过，先重建变量/字符串输入框（尽量保留已有值）。 */
+    private boolean syncTemplate() {
+        templateSyncTimer.stop();
+        String content = templateText.getText();
+        if (!content.equals(currentTemplate)) {
+            List<String> oldVariables = variablePanel.getInputNames();
+            List<String> oldStrings = stringPanel.getInputNames();
+            currentTemplate = content;
+            rebuildInputs(content);
+            return !oldVariables.equals(variablePanel.getInputNames())
+                    || !oldStrings.equals(stringPanel.getInputNames());
+        }
+        return false;
+    }
+
+    private void invalidateResult(String reason) {
+        resultValid = false;
+        currentDocxResult = null;
+        if (resultPanel != null) {
+            resultPanel.setText("");
+        }
+        if (copyBtn != null) {
+            copyBtn.setEnabled(false);
+            saveResultBtn.setEnabled(false);
+        }
+        if (statusLabel != null && reason != null && !reason.isEmpty()) {
+            setStatus(reason);
+        }
+    }
+
+    private void markResultValid() {
+        resultValid = true;
+        copyBtn.setEnabled(true);
+        saveResultBtn.setEnabled(true);
     }
 
     // ---------- 模板文件管理 ----------
@@ -257,24 +340,25 @@ public final class TemplateToolApp extends JFrame {
         currentTemplateName = name;
         currentTemplate = content;
         lastDiskContent = content;
-        templateText.setText(content);
-        templateNameLabel.setText(name);
-        currentDocxResult = null;
+        currentTemplateSaved = true;
+        setTemplateText(content);
         setDocxMode(docx);
         currentValues = valuesStore.loadFor(name);   // 读该模板上次的输入，用于回填
         rebuildInputs(content, true);
+        invalidateResult(null);
+        updateDirtyIndicator();
         rememberTemplate(name);
         setStatus("已加载模板：" + name + (docx ? "（Word 文档，只读预览）" : ""));
     }
 
-    /** 切换模板编辑模式：Word 模板为只读预览，且禁用「新建模板 / 保存模板」。 */
+    /** 切换模板编辑模式：Word 模板仅禁用模板编辑与保存，新建文本模板始终可用。 */
     private void setDocxMode(boolean docx) {
         this.docxMode = docx;
         templateText.setEditable(!docx);
-        newBtn.setEnabled(!docx);
+        newBtn.setEnabled(true);
         saveTplBtn.setEnabled(!docx);
         tplBorder.setTitle(docx
-                ? "模板内容（Word 文档模板：只读预览，请用 Word 编辑保存后再重新选择该模板）"
+                ? "Word 模板为只读预览，请使用 Word 编辑后重新打开或重新加载"
                 : "模板内容（可直接在下方修改，点“保存模板”写回当前模板文件）");
         tplPanel.revalidate();
         tplPanel.repaint();
@@ -291,27 +375,34 @@ public final class TemplateToolApp extends JFrame {
         chooser.setCurrentDirectory(dir);
         chooser.setDialogTitle("选择模板文件（Templates 文件夹）");
         chooser.setFileFilter(new FileNameExtensionFilter("模板文件 (*.txt; *.docx)", "txt", "docx"));
-        chooser.setAcceptAllFileFilterUsed(true);
+        chooser.setAcceptAllFileFilterUsed(false);
         if (chooser.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) {
             return;
         }
         File selected = chooser.getSelectedFile();
+        if (!isSupportedTemplateName(selected.getName())) {
+            JOptionPane.showMessageDialog(this, "仅支持 .txt 和 .docx 模板。",
+                    "文件类型不支持", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+        if (!confirmUnsaved("继续")) {
+            return;
+        }
         File target = selected;
         Path templatesDir = templateStore.templatesDir();
         try {
             if (!selected.getParentFile().toPath().toAbsolutePath().normalize()
                     .equals(templatesDir.toAbsolutePath().normalize())) {
-                // 选中的是目录外的文件：先复制进 Templates 文件夹再使用
-                target = new File(dir, selected.getName());
+                target = chooseImportTarget(selected, dir);
+                if (target == null) {
+                    return;
+                }
                 Files.copy(selected.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING);
-                setStatus("已从外部导入模板：" + selected.getName());
+                setStatus("已从外部导入模板：" + target.getName());
             }
         } catch (IOException e) {
             JOptionPane.showMessageDialog(this, "无法导入模板文件：\n" + e,
                     "导入失败", JOptionPane.ERROR_MESSAGE);
-            return;
-        }
-        if (!confirmDiscardUnsaved()) {
             return;
         }
         loadTemplate(target.getName());
@@ -319,11 +410,11 @@ public final class TemplateToolApp extends JFrame {
 
     /** 「新建模板」：输入任意名字，清空编辑框等待写入；文件在首次「保存模板」时创建。 */
     private void newTemplate() {
-        if (!confirmDiscardUnsaved()) {
+        if (!confirmUnsaved("继续")) {
             return;
         }
         String name = JOptionPane.showInputDialog(this,
-                "请输入新模板文件名（存放在 Templates 文件夹内，可任意命名）：",
+                "请输入新模板文件名（仅支持 .txt）：",
                 "新建模板", JOptionPane.PLAIN_MESSAGE);
         if (name == null) {
             return;
@@ -335,55 +426,77 @@ public final class TemplateToolApp extends JFrame {
                     "文件名不合法", JOptionPane.ERROR_MESSAGE);
             return;
         }
-        if (!name.contains(".")) {
-            name = name + ".txt";               // 统一模板扩展名
+        String extension = extensionOf(name);
+        if (extension.isEmpty()) {
+            name += ".txt";
+        } else if (!".txt".equalsIgnoreCase(extension)) {
+            JOptionPane.showMessageDialog(this,
+                    "界面内新建仅支持 .txt 模板；Word 模板请从外部导入。",
+                    "文件类型不支持", JOptionPane.WARNING_MESSAGE);
+            return;
         }
-        if (templateStore.listTemplateNames().contains(name)) {
-            loadTemplate(name);
-            setStatus("该模板已存在，已为你打开：" + name);
+        String existingName = findExistingTemplateName(name);
+        if (existingName != null) {
+            loadTemplate(existingName);
+            setStatus("该模板已存在，已为你打开：" + existingName);
             return;
         }
         currentTemplateName = name;
         currentTemplate = "";
         lastDiskContent = "";
+        currentTemplateSaved = false;
         currentValues = new LinkedHashMap<>();
-        currentDocxResult = null;
         setDocxMode(false);
-        templateText.setText("");
-        templateNameLabel.setText(name);
+        setTemplateText("");
         rebuildInputs("");
+        invalidateResult(null);
+        updateDirtyIndicator();
         rememberTemplate(name);
         setStatus("新模板 " + name + " 尚未保存，请在下方输入内容后点“保存模板”。");
     }
 
     /** 「保存模板」：把编辑框内容写回当前模板文件（不存在则新建）。 */
     private void saveTemplate() {
+        saveTemplateInternal(true);
+    }
+
+    private boolean saveTemplateInternal(boolean showSuccessDialog) {
         if (docxMode) {
             JOptionPane.showMessageDialog(this,
                     "Word 模板不支持在界面内保存，请用 Word 编辑模板文件后重新选择该模板。",
                     "提示", JOptionPane.INFORMATION_MESSAGE);
-            return;
+            return false;
         }
         syncTemplate();
         String name = currentTemplateName;
         if (name.isEmpty()) {
             JOptionPane.showMessageDialog(this, "当前没有选中的模板文件。",
                     "提示", JOptionPane.INFORMATION_MESSAGE);
-            return;
+            return false;
+        }
+        if (!isTxtName(name)) {
+            JOptionPane.showMessageDialog(this, "文本模板只能保存为 .txt 文件。",
+                    "文件类型不支持", JOptionPane.WARNING_MESSAGE);
+            return false;
         }
         try {
             templateStore.writeTemplate(name, currentTemplate);
             lastDiskContent = currentTemplate;
+            currentTemplateSaved = true;
         } catch (IOException e) {
             JOptionPane.showMessageDialog(this, "无法写入模板文件：\n" + e,
                     "保存失败", JOptionPane.ERROR_MESSAGE);
-            return;
+            return false;
         }
         rememberTemplate(name);
+        updateDirtyIndicator();
         Path file = templateStore.templateFile(name);
         setStatus("模板已保存到：" + file);
-        JOptionPane.showMessageDialog(this, "模板已保存到：" + file, "已保存",
-                JOptionPane.INFORMATION_MESSAGE);
+        if (showSuccessDialog) {
+            JOptionPane.showMessageDialog(this, "模板已保存到：" + file, "已保存",
+                    JOptionPane.INFORMATION_MESSAGE);
+        }
+        return true;
     }
 
     /** 「打开文件夹」：用系统文件管理器打开 Templates 文件夹。 */
@@ -416,14 +529,52 @@ public final class TemplateToolApp extends JFrame {
         }
     }
 
-    /** 编辑框内容与磁盘不一致（有未保存修改）时询问是否丢弃；无修改直接返回 true。 */
-    private boolean confirmDiscardUnsaved() {
-        if (templateText.getText().equals(lastDiskContent)) {
+    /** 保存/放弃/取消三选一，供关闭、切换和新建共同使用。 */
+    private boolean confirmUnsaved(String continueText) {
+        if (!hasUnsavedTemplateChanges()) {
             return true;
         }
-        return JOptionPane.showConfirmDialog(this,
-                "当前模板有未保存的修改，继续操作将丢弃这些修改。是否继续？",
-                "未保存的修改", JOptionPane.YES_NO_OPTION) == JOptionPane.YES_OPTION;
+        Object[] options = {"保存并" + continueText, "不保存并" + continueText, "取消"};
+        int choice = JOptionPane.showOptionDialog(this,
+                "当前模板有未保存的修改。",
+                "未保存的修改", JOptionPane.DEFAULT_OPTION, JOptionPane.WARNING_MESSAGE,
+                null, options, options[0]);
+        if (choice == 0) {
+            return saveTemplateInternal(false);
+        }
+        return choice == 1;
+    }
+
+    private boolean hasUnsavedTemplateChanges() {
+        return !docxMode && (!currentTemplateSaved || !templateText.getText().equals(lastDiskContent));
+    }
+
+    private void closeApplication() {
+        if (!confirmUnsaved("退出")) {
+            return;
+        }
+        saveLastInputs();
+        dispose();
+        System.exit(0);
+    }
+
+    private void setTemplateText(String text) {
+        templateSyncTimer.stop();
+        programmaticUpdate = true;
+        try {
+            templateText.setText(text);
+        } finally {
+            programmaticUpdate = false;
+        }
+    }
+
+    private void updateDirtyIndicator() {
+        String shown = currentTemplateName.isEmpty() ? "—" : currentTemplateName;
+        if (hasUnsavedTemplateChanges()) {
+            shown += " *";
+        }
+        templateNameLabel.setText(shown);
+        setTitle("模板填充工具" + (hasUnsavedTemplateChanges() ? " *" : ""));
     }
 
     /** 记住当前使用的模板文件名（写进 last_values.json，下次启动恢复）。 */
@@ -445,6 +596,61 @@ public final class TemplateToolApp extends JFrame {
             }
         }
         return true;
+    }
+
+    private File chooseImportTarget(File source, File templatesDir) {
+        File target = new File(templatesDir, source.getName());
+        if (!target.exists()) {
+            return target;
+        }
+        Object[] options = {"覆盖现有模板", "使用新名称导入", "取消"};
+        int choice = JOptionPane.showOptionDialog(this,
+                "Templates 文件夹中已存在同名模板：\n" + source.getName(),
+                "模板已存在", JOptionPane.DEFAULT_OPTION, JOptionPane.WARNING_MESSAGE,
+                null, options, options[1]);
+        if (choice == 0) {
+            return target;
+        }
+        if (choice != 1) {
+            return null;
+        }
+        return nextAvailableImportName(source.getName(), templatesDir);
+    }
+
+    private static File nextAvailableImportName(String originalName, File dir) {
+        String extension = extensionOf(originalName);
+        String base = originalName.substring(0, originalName.length() - extension.length());
+        for (int number = 2; ; number++) {
+            String candidate = base + " (" + number + ")" + extension;
+            if (isValidTemplateName(candidate) && isSupportedTemplateName(candidate)) {
+                File file = new File(dir, candidate);
+                if (!file.exists()) {
+                    return file;
+                }
+            }
+        }
+    }
+
+    private static boolean isSupportedTemplateName(String name) {
+        return isTxtName(name) || DocxProcessor.isDocxName(name);
+    }
+
+    private static boolean isTxtName(String name) {
+        return name != null && name.toLowerCase(Locale.ROOT).endsWith(".txt");
+    }
+
+    private static String extensionOf(String name) {
+        int dot = name.lastIndexOf('.');
+        return dot <= 0 ? "" : name.substring(dot);
+    }
+
+    private String findExistingTemplateName(String name) {
+        for (String existing : templateStore.listTemplateNames()) {
+            if (existing.equalsIgnoreCase(name)) {
+                return existing;
+            }
+        }
+        return null;
     }
 
     /** 按模板一次性重建变量/字符串输入框（尽量保留已有输入、用该模板上次保存的值回填）。 */
@@ -485,7 +691,11 @@ public final class TemplateToolApp extends JFrame {
     // ---------- 动作 ----------
 
     private void generate() {
-        syncTemplate();
+        invalidateResult(null);
+        if (syncTemplate()) {
+            setStatus("输入项已更新，请填写后再次生成。");
+            return;
+        }
         Map<String, String> values = validatedValues();
         if (values == null) {
             return;
@@ -518,6 +728,7 @@ public final class TemplateToolApp extends JFrame {
             return;
         }
         resultPanel.setText(result.result());
+        markResultValid();
         setStatus(buildSuccessMessage(parsed, selectedDate));
         saveLastInputs();
     }
@@ -569,6 +780,7 @@ public final class TemplateToolApp extends JFrame {
             }
             currentDocxResult = tmp;
             resultPanel.setText(rr.result());
+            markResultValid();
             setStatus(buildSuccessMessage(parsed, selectedDate) + " 点「保存结果到文件」导出 Word 文档。");
         } catch (IOException e) {
             if (tmp != null) {
@@ -612,10 +824,10 @@ public final class TemplateToolApp extends JFrame {
         return msg;
     }
 
-    /** 结果为空时弹出提示并返回 false，否则返回 true。 */
+    /** 只允许使用最近一次成功生成、且生成后未发生任何输入变化的结果。 */
     private boolean requireResult() {
-        if (resultPanel.getText().isEmpty()) {
-            JOptionPane.showMessageDialog(this, "结果为空，请先点击“生成结果”。",
+        if (!resultValid) {
+            JOptionPane.showMessageDialog(this, "结果已失效，请重新点击“生成结果”。",
                     "提示", JOptionPane.INFORMATION_MESSAGE);
             return false;
         }
@@ -643,21 +855,26 @@ public final class TemplateToolApp extends JFrame {
         chooser.setCurrentDirectory(java.nio.file.Paths.get("").toAbsolutePath().toFile());
         chooser.setDialogTitle("保存结果");
         chooser.setSelectedFile(new File(TemplateConstants.RESULT_FILENAME));
-        if (chooser.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) {
+        chooser.setFileFilter(new FileNameExtensionFilter("文本文件 (*.txt)", "txt"));
+        chooser.setAcceptAllFileFilterUsed(false);
+        while (chooser.showSaveDialog(this) == JFileChooser.APPROVE_OPTION) {
+            File file = withRequiredExtension(chooser.getSelectedFile(), ".txt");
+            if (file == null) {
+                continue;
+            }
+            if (!confirmFileOverwrite(file)) {
+                continue;
+            }
+            try {
+                TextFileWriter.writeText(file.toPath(), resultPanel.getText());
+            } catch (IOException e) {
+                JOptionPane.showMessageDialog(this, "无法写入文件：\n" + e,
+                        "保存失败", JOptionPane.ERROR_MESSAGE);
+                return;
+            }
+            setStatus("结果已保存到：" + file.getAbsolutePath());
             return;
         }
-        File file = chooser.getSelectedFile();
-        if (file.getName().indexOf('.') < 0) {
-            file = new File(file.getParentFile(), file.getName() + ".txt");   // 统一扩展名
-        }
-        try {
-            TextFileWriter.writeText(file.toPath(), resultPanel.getText());
-        } catch (IOException e) {
-            JOptionPane.showMessageDialog(this, "无法写入文件：\n" + e,
-                    "保存失败", JOptionPane.ERROR_MESSAGE);
-            return;
-        }
-        setStatus("结果已保存到：" + file.getAbsolutePath());
     }
 
     /** 把最近生成的 Word 结果（临时 .docx）复制到用户选择的文件。 */
@@ -671,21 +888,50 @@ public final class TemplateToolApp extends JFrame {
         chooser.setCurrentDirectory(java.nio.file.Paths.get("").toAbsolutePath().toFile());
         chooser.setDialogTitle("保存 Word 结果");
         chooser.setSelectedFile(new File("result.docx"));
-        if (chooser.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) {
+        chooser.setFileFilter(new FileNameExtensionFilter("Word 文档 (*.docx)", "docx"));
+        chooser.setAcceptAllFileFilterUsed(false);
+        while (chooser.showSaveDialog(this) == JFileChooser.APPROVE_OPTION) {
+            File file = withRequiredExtension(chooser.getSelectedFile(), ".docx");
+            if (file == null) {
+                continue;
+            }
+            if (!confirmFileOverwrite(file)) {
+                continue;
+            }
+            try {
+                Files.copy(currentDocxResult, file.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            } catch (IOException e) {
+                JOptionPane.showMessageDialog(this, "无法写入文件：\n" + e,
+                        "保存失败", JOptionPane.ERROR_MESSAGE);
+                return;
+            }
+            setStatus("结果已保存到：" + file.getAbsolutePath());
             return;
         }
-        File file = chooser.getSelectedFile();
-        if (file.getName().indexOf('.') < 0) {
-            file = new File(file.getParentFile(), file.getName() + ".docx");
+    }
+
+    private File withRequiredExtension(File selected, String requiredExtension) {
+        String extension = extensionOf(selected.getName());
+        if (extension.isEmpty()) {
+            return new File(selected.getParentFile(), selected.getName() + requiredExtension);
         }
-        try {
-            Files.copy(currentDocxResult, file.toPath(), StandardCopyOption.REPLACE_EXISTING);
-        } catch (IOException e) {
-            JOptionPane.showMessageDialog(this, "无法写入文件：\n" + e,
-                    "保存失败", JOptionPane.ERROR_MESSAGE);
-            return;
+        if (!requiredExtension.equalsIgnoreCase(extension)) {
+            JOptionPane.showMessageDialog(this,
+                    "文件名必须使用 " + requiredExtension + " 扩展名，请修改后重试。",
+                    "扩展名不正确", JOptionPane.WARNING_MESSAGE);
+            return null;
         }
-        setStatus("结果已保存到：" + file.getAbsolutePath());
+        return selected;
+    }
+
+    private boolean confirmFileOverwrite(File file) {
+        if (!file.exists()) {
+            return true;
+        }
+        return JOptionPane.showConfirmDialog(this,
+                "文件已存在，是否覆盖？\n" + file.getAbsolutePath(),
+                "确认覆盖", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE)
+                == JOptionPane.YES_OPTION;
     }
 
     private void setStatus(String text) {
