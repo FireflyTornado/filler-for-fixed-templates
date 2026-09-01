@@ -83,12 +83,14 @@ public final class TemplateToolApp extends JFrame {
 
         setSize(1050, 800);
         setMinimumSize(new java.awt.Dimension(660, 660));
-        setDefaultCloseOperation(WindowConstants.DO_NOTHING_ON_CLOSE);
+        // 关闭主窗口就结束整个应用。仅调用 dispose() 只能释放窗口资源；如果 AWT
+        // 或其他非守护线程仍在运行，JVM 会继续留在后台。EXIT_ON_CLOSE 会在下方
+        // 的保存逻辑执行完后正常终止 JVM，并触发 deleteOnExit/关闭钩子等清理。
+        setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
         addWindowListener(new WindowAdapter() {
             @Override
             public void windowClosing(WindowEvent e) {
                 saveLastInputs();   // 关闭前保存当前输入
-                dispose();
             }
         });
 

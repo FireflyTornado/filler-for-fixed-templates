@@ -51,7 +51,9 @@ echo.
 
 echo Compiling sources...
 "%JAVAC%" --release 17 -encoding UTF-8 -d "out" -sourcepath "src\main\java" ^
-    src\main\java\com\firefly\Main.java
+    src\main\java\com\firefly\*.java ^
+    src\main\java\com\firefly\core\*.java ^
+    src\main\java\com\firefly\ui\*.java
 if errorlevel 1 (
     echo [ERROR] Compilation failed.
     pause
