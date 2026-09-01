@@ -7,6 +7,7 @@ import com.firefly.core.TemplateRenderer;
 import com.firefly.core.TemplateStore;
 import com.firefly.core.TextFileWriter;
 import com.firefly.core.ValueNormalizer;
+import com.firefly.ui.DatePickerPanel;
 import com.firefly.ui.InputPanel;
 import com.firefly.ui.ResultPanel;
 
@@ -59,6 +60,7 @@ public final class TemplateToolApp extends JFrame {
 
     private JLabel templateNameLabel;
     private JTextArea templateText;
+    private DatePickerPanel datePicker;
     private InputPanel variablePanel;
     private InputPanel stringPanel;
     private ResultPanel resultPanel;
@@ -145,10 +147,12 @@ public final class TemplateToolApp extends JFrame {
         JScrollPane tplScroll = new JScrollPane(templateText);
         tplScroll.setBorder(BorderFactory.createEmptyBorder(8, 8, 0, 8));
         tplPanel.add(tplScroll, BorderLayout.CENTER);
+        datePicker = new DatePickerPanel();
+        tplPanel.add(datePicker, BorderLayout.EAST);
         JPanel tplBottom = new JPanel(new BorderLayout(4, 0));
         tplBottom.setBorder(BorderFactory.createEmptyBorder(4, 8, 8, 8));
         JLabel tplHint = new JLabel(
-                "提示：{{变量名}} 会生成输入框（内容为纯数字也照常，如{{0.9}}）；运算需加 = 前缀：{{=变量1*变量2}}；日期变量用{{今日年月日}}/{{昨日年月日}}；字符串用[[字符串]]");
+                "提示：日历日期用{{选取今日年月日}}/{{选取昨日年月日}}；系统日期用{{今日年月日}}/{{昨日年月日}}；字符串用[[字符串]]");
         tplHint.setForeground(Color.GRAY);
         tplBottom.add(tplHint, BorderLayout.WEST);
         tplPanel.add(tplBottom, BorderLayout.SOUTH);
@@ -489,12 +493,13 @@ public final class TemplateToolApp extends JFrame {
         variablePanel.markAllValid();
 
         LocalDate today = LocalDate.now();
-        Map<String, String> autoVals = TemplateConstants.autoValues(today);
+        LocalDate selectedDate = datePicker.getSelectedDate();
+        Map<String, String> autoVals = TemplateConstants.autoValues(today, selectedDate);
         Map<String, String> stringValues = stringPanel.getValues();
         TemplateParser.ParsedTemplate parsed = TemplateParser.parse(currentTemplate);
 
         if (docxMode) {
-            generateDocx(parsed, values, autoVals, stringValues, today);
+            generateDocx(parsed, values, autoVals, stringValues, today, selectedDate);
             return;
         }
 
@@ -507,7 +512,7 @@ public final class TemplateToolApp extends JFrame {
             return;
         }
         resultPanel.setText(result.result());
-        setStatus(buildSuccessMessage(parsed, today));
+        setStatus(buildSuccessMessage(parsed, today, selectedDate));
         saveLastInputs();
     }
 
@@ -541,7 +546,8 @@ public final class TemplateToolApp extends JFrame {
                               Map<String, String> values,
                               Map<String, String> autoVals,
                               Map<String, String> stringValues,
-                              LocalDate today) {
+                              LocalDate today,
+                              LocalDate selectedDate) {
         Path src = templateStore.templateFile(currentTemplateName);
         Path tmp = null;
         try {
@@ -558,7 +564,7 @@ public final class TemplateToolApp extends JFrame {
             }
             currentDocxResult = tmp;
             resultPanel.setText(rr.result());
-            setStatus(buildSuccessMessage(parsed, today) + " 点「保存结果到文件」导出 Word 文档。");
+            setStatus(buildSuccessMessage(parsed, today, selectedDate) + " 点「保存结果到文件」导出 Word 文档。");
         } catch (IOException e) {
             if (tmp != null) {
                 try {
@@ -576,7 +582,9 @@ public final class TemplateToolApp extends JFrame {
     }
 
     /** 生成成功后的状态栏文案（文本与 Word 两种模式共用）。 */
-    private static String buildSuccessMessage(TemplateParser.ParsedTemplate parsed, LocalDate today) {
+    private static String buildSuccessMessage(TemplateParser.ParsedTemplate parsed,
+                                              LocalDate today,
+                                              LocalDate selectedDate) {
         List<String> names = parsed.inputVariables();
         List<String> autoNames = parsed.autoVariables();
         int exprCount = parsed.expressionCount();
@@ -587,7 +595,8 @@ public final class TemplateToolApp extends JFrame {
         } else {
             msg = "生成成功：已替换 " + names.size() + " 个变量。";
             if (!autoNames.isEmpty()) {
-                msg += " 自动填充 " + autoNames.size() + " 个日期变量（" + today.getYear() + "）。";
+                msg += " 自动填充 " + autoNames.size() + " 个日期变量"
+                        + "（系统日期 " + today + "，选取日期 " + selectedDate + "）。";
             }
             if (exprCount > 0) {
                 msg += " 计算 " + exprCount + " 个表达式。";

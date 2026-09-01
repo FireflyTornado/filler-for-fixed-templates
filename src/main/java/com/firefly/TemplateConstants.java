@@ -24,11 +24,13 @@ public final class TemplateConstants {
     public static final String EXAMPLE_DOCX_NAME = "example.docx";
     public static final String LAST_TEMPLATE_KEY = "@@last_template@@";
 
-    /** 自动日期：出现在模板中时，由系统日期自动填充，无需手动输入。
-     *  今日… 取当天日期；昨日… 取前一天日期。 */
+    /** 自动日期：出现在模板中时自动填充，无需手动输入。
+     *  今日/昨日… 使用系统日期；选取今日/昨日… 使用界面日历选中的日期。 */
     public static final Set<String> AUTO_VAR_SET =
             Set.of("今日年", "今日年月", "今日年月日",
-                    "昨日年", "昨日年月", "昨日年月日");
+                    "昨日年", "昨日年月", "昨日年月日",
+                    "选取今日年", "选取今日年月", "选取今日年月日",
+                    "选取昨日年", "选取昨日年月", "选取昨日年月日");
 
     /** 匹配 {{...}} 占位符；以 = 开头表示算术表达式（如 {{=数量*单价}}），否则内容按变量名处理 */
     public static final Pattern PLACEHOLDER_RE = Pattern.compile("\\{\\{([^{}]*)\\}\\}");
@@ -48,15 +50,44 @@ public final class TemplateConstants {
      * 键与 {@link #AUTO_VAR_SET} 一一对应。
      */
     public static Map<String, String> autoValues(LocalDate now) {
-        LocalDate yesterday = now.minusDays(1);
+        return autoValues(now, now);
+    }
+
+    /**
+     * 根据系统日期和界面选取日期生成全部自动日期变量。
+     *
+     * @param systemToday 系统当天日期，用于今日/昨日…变量
+     * @param selectedDay 日历选中日期，用于选取今日/昨日…变量
+     */
+    public static Map<String, String> autoValues(LocalDate systemToday, LocalDate selectedDay) {
+        LocalDate yesterday = systemToday.minusDays(1);
+        LocalDate selectedYesterday = selectedDay.minusDays(1);
         Map<String, String> map = new LinkedHashMap<>();
-        map.put("今日年", now.getYear() + "年");
-        map.put("今日年月", now.getYear() + "年" + now.getMonthValue() + "月");
-        map.put("今日年月日", now.getYear() + "年" + now.getMonthValue() + "月" + now.getDayOfMonth() + "日");
-        map.put("昨日年", yesterday.getYear() + "年");
-        map.put("昨日年月", yesterday.getYear() + "年" + yesterday.getMonthValue() + "月");
-        map.put("昨日年月日", yesterday.getYear() + "年" + yesterday.getMonthValue() + "月" + yesterday.getDayOfMonth() + "日");
+        map.put("今日年", year(systemToday));
+        map.put("今日年月", yearMonth(systemToday));
+        map.put("今日年月日", yearMonthDay(systemToday));
+        map.put("昨日年", year(yesterday));
+        map.put("昨日年月", yearMonth(yesterday));
+        map.put("昨日年月日", yearMonthDay(yesterday));
+        map.put("选取今日年", year(selectedDay));
+        map.put("选取今日年月", yearMonth(selectedDay));
+        map.put("选取今日年月日", yearMonthDay(selectedDay));
+        map.put("选取昨日年", year(selectedYesterday));
+        map.put("选取昨日年月", yearMonth(selectedYesterday));
+        map.put("选取昨日年月日", yearMonthDay(selectedYesterday));
         return map;
+    }
+
+    private static String year(LocalDate date) {
+        return date.getYear() + "年";
+    }
+
+    private static String yearMonth(LocalDate date) {
+        return date.getYear() + "年" + date.getMonthValue() + "月";
+    }
+
+    private static String yearMonthDay(LocalDate date) {
+        return yearMonth(date) + date.getDayOfMonth() + "日";
     }
 
     /**

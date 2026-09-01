@@ -10,6 +10,7 @@ A lightweight Java Swing desktop tool: fills pre-written fixed templates into co
 - **Addable strings** → `[[string]]` uses a large text input area, output as-is (including line breaks, spaces, formatting)
 - **Operator support** → a `=` prefix denotes an arithmetic expression, e.g. `{{=variable1/variable2}}`, supporting `+ - * / **` and parentheses, with results rounded to 2 decimal places
 - **Automatic date retrieval** → `{{todayYear}}`, `{{todayYearMonth}}`, `{{todayYearMonthDay}}` automatically take the current system date, and `{{yesterdayYear}}`, `{{yesterdayYearMonth}}`, `{{yesterdayYearMonthDay}}` automatically take the previous day's date
+- **Calendar-selected dates** → choose any date beside the template editor; click the year/month title to pick a month, then click its year title to jump across years; use `{{选取今日年}}`, `{{选取今日年月}}`, and `{{选取今日年月日}}` for that date, or the corresponding `选取昨日…` variables for the preceding day; “Back to Today” resets the selection
 - **Remembers last input** → each template remembers its last filled values, auto-saved to `last_values.json`, and auto-restored when that template is opened
 - **Multi-template management** → template files with any names are stored in the `Templates/` folder; you can switch via "Choose Template File…", "New Template", save changes back to the corresponding file with "Save Template", and the last-used template is remembered and restored on next startup
 - **Edit templates on the fly** → edit and save directly in the UI, or click "Open Folder" to edit with an external editor
@@ -36,6 +37,8 @@ A lightweight Java Swing desktop tool: fills pre-written fixed templates into co
 | `{{=variable1*variable2}}` | Arithmetic expression (requires `=` prefix), result rounded to 2 decimal places | `{{=monthlyTotal/monthlyPlan}}` |
 | `{{todayYear}} {{todayYearMonth}} {{todayYearMonthDay}}` | Auto-fetches today's date variable | `{{todayYearMonthDay}}` |
 | `{{yesterdayYear}} {{yesterdayYearMonth}} {{yesterdayYearMonthDay}}` | Auto-fetches yesterday's date variable | `{{yesterdayYearMonthDay}}` |
+| `{{选取今日年}} {{选取今日年月}} {{选取今日年月日}}` | Uses the date selected in the calendar | `{{选取今日年月日}}` |
+| `{{选取昨日年}} {{选取昨日年月}} {{选取昨日年月日}}` | Uses the day before the calendar selection | `{{选取昨日年月日}}` |
 | `[[stringName]]` | Multi-line text, output as-is | `[[remarks]]` |
 
 ## Build

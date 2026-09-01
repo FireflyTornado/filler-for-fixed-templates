@@ -70,7 +70,7 @@ public final class InputPanel extends JPanel {
             String text = stringMode
                     ? "模板中没有 [[字符串]] 占位符，此处留空。"
                     : (hasAuto
-                            ? "模板中没有需要填写的变量，但包含自动日期变量（{{今日年月日}}/{{昨日年月日}}），直接点“生成结果”即可。"
+                            ? "模板中没有需要填写的变量，但包含自动日期变量，选择所需日期后直接点“生成结果”即可。"
                             : "模板中没有找到 {{变量名}} 占位符，点“生成结果”会输出模板原文。");
             JLabel hint = new JLabel(text);
             hint.setForeground(stringMode ? STRING_HINT_FG : HINT_FG);
