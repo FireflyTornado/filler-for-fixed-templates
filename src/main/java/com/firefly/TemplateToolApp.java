@@ -152,7 +152,7 @@ public final class TemplateToolApp extends JFrame {
         datePicker = new DatePickerPanel();
         tplBottom.add(datePicker, BorderLayout.NORTH);
         JLabel tplHint = new JLabel(
-                "提示：日历日期用{{选取今日年月日}}/{{选取昨日年月日}}；系统日期用{{今日年月日}}/{{昨日年月日}}；字符串用[[字符串]]");
+                "提示：所有日期变量均以日历日期为基准，如{{昨日年月日}}/{{今日年月日}}/{{明日年月日}}；字符串用[[字符串]]");
         tplHint.setForeground(Color.GRAY);
         tplBottom.add(tplHint, BorderLayout.SOUTH);
         tplPanel.add(tplBottom, BorderLayout.SOUTH);
@@ -492,21 +492,20 @@ public final class TemplateToolApp extends JFrame {
         }
         variablePanel.markAllValid();
 
-        LocalDate today = LocalDate.now();
         LocalDate selectedDate = datePicker.getSelectedDate();
         if (selectedDate == null) {
             JOptionPane.showMessageDialog(this,
-                    "选取日期格式不正确，请输入有效日期，例如 2026-09-01。",
+                    "基准日期格式不正确，请输入有效日期，例如 2026-09-01。",
                     "日期格式错误", JOptionPane.WARNING_MESSAGE);
-            setStatus("选取日期格式错误，未生成结果。");
+            setStatus("基准日期格式错误，未生成结果。");
             return;
         }
-        Map<String, String> autoVals = TemplateConstants.autoValues(today, selectedDate);
+        Map<String, String> autoVals = TemplateConstants.autoValues(selectedDate);
         Map<String, String> stringValues = stringPanel.getValues();
         TemplateParser.ParsedTemplate parsed = TemplateParser.parse(currentTemplate);
 
         if (docxMode) {
-            generateDocx(parsed, values, autoVals, stringValues, today, selectedDate);
+            generateDocx(parsed, values, autoVals, stringValues, selectedDate);
             return;
         }
 
@@ -519,7 +518,7 @@ public final class TemplateToolApp extends JFrame {
             return;
         }
         resultPanel.setText(result.result());
-        setStatus(buildSuccessMessage(parsed, today, selectedDate));
+        setStatus(buildSuccessMessage(parsed, selectedDate));
         saveLastInputs();
     }
 
@@ -553,7 +552,6 @@ public final class TemplateToolApp extends JFrame {
                               Map<String, String> values,
                               Map<String, String> autoVals,
                               Map<String, String> stringValues,
-                              LocalDate today,
                               LocalDate selectedDate) {
         Path src = templateStore.templateFile(currentTemplateName);
         Path tmp = null;
@@ -571,7 +569,7 @@ public final class TemplateToolApp extends JFrame {
             }
             currentDocxResult = tmp;
             resultPanel.setText(rr.result());
-            setStatus(buildSuccessMessage(parsed, today, selectedDate) + " 点「保存结果到文件」导出 Word 文档。");
+            setStatus(buildSuccessMessage(parsed, selectedDate) + " 点「保存结果到文件」导出 Word 文档。");
         } catch (IOException e) {
             if (tmp != null) {
                 try {
@@ -590,7 +588,6 @@ public final class TemplateToolApp extends JFrame {
 
     /** 生成成功后的状态栏文案（文本与 Word 两种模式共用）。 */
     private static String buildSuccessMessage(TemplateParser.ParsedTemplate parsed,
-                                              LocalDate today,
                                               LocalDate selectedDate) {
         List<String> names = parsed.inputVariables();
         List<String> autoNames = parsed.autoVariables();
@@ -603,7 +600,7 @@ public final class TemplateToolApp extends JFrame {
             msg = "生成成功：已替换 " + names.size() + " 个变量。";
             if (!autoNames.isEmpty()) {
                 msg += " 自动填充 " + autoNames.size() + " 个日期变量"
-                        + "（系统日期 " + today + "，选取日期 " + selectedDate + "）。";
+                        + "（日历基准日期 " + selectedDate + "）。";
             }
             if (exprCount > 0) {
                 msg += " 计算 " + exprCount + " 个表达式。";

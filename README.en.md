@@ -9,8 +9,8 @@ A lightweight Java Swing desktop tool: fills pre-written fixed templates into co
 - **Auto-generated input fields** → every `{{variable}}` in a template automatically becomes a numeric input field; leaving it blank is treated as 0, and entering a non-numeric value shows a warning
 - **Addable strings** → `[[string]]` uses a large text input area, output as-is (including line breaks, spaces, formatting)
 - **Operator support** → a `=` prefix denotes an arithmetic expression, e.g. `{{=variable1/variable2}}`, supporting `+ - * / **` and parentheses, with results rounded to 2 decimal places
-- **Automatic date retrieval** → `{{todayYear}}`, `{{todayYearMonth}}`, `{{todayYearMonthDay}}` automatically take the current system date, and `{{yesterdayYear}}`, `{{yesterdayYearMonth}}`, `{{yesterdayYearMonthDay}}` automatically take the previous day's date
-- **Calendar-selected dates** → type a `yyyy-MM-dd` date below the template editor or use the popup calendar, which includes quick month/year navigation, hierarchical month/year selection, week numbers, and Sunday highlighting; use `{{选取今日年}}`, `{{选取今日年月}}`, and `{{选取今日年月日}}` for that date, or the corresponding `选取昨日…` variables for the preceding day; “Back to Today” resets the selection
+- **Calendar base date** → all built-in date variables use the calendar selection as their base; every launch starts with the current system date, and you can type `yyyy-MM-dd` or use the popup calendar to change it
+- **Complete date derivation** → supports yesterday/today/tomorrow, previous/current/next month, and the first/last day of the current month, with automatic month, year, and leap-year handling
 - **Remembers last input** → each template remembers its last filled values, auto-saved to `last_values.json`, and auto-restored when that template is opened
 - **Multi-template management** → template files with any names are stored in the `Templates/` folder; you can switch via "Choose Template File…", "New Template", save changes back to the corresponding file with "Save Template", and the last-used template is remembered and restored on next startup
 - **Edit templates on the fly** → edit and save directly in the UI, or click "Open Folder" to edit with an external editor
@@ -35,10 +35,13 @@ A lightweight Java Swing desktop tool: fills pre-written fixed templates into co
 | --- | --- | --- |
 | `{{variable}}` | Generates a numeric input field; blank is treated as 0 | `{{yesterdayData}}` |
 | `{{=variable1*variable2}}` | Arithmetic expression (requires `=` prefix), result rounded to 2 decimal places | `{{=monthlyTotal/monthlyPlan}}` |
-| `{{todayYear}} {{todayYearMonth}} {{todayYearMonthDay}}` | Auto-fetches today's date variable | `{{todayYearMonthDay}}` |
-| `{{yesterdayYear}} {{yesterdayYearMonth}} {{yesterdayYearMonthDay}}` | Auto-fetches yesterday's date variable | `{{yesterdayYearMonthDay}}` |
-| `{{选取今日年}} {{选取今日年月}} {{选取今日年月日}}` | Uses the date selected in the calendar | `{{选取今日年月日}}` |
-| `{{选取昨日年}} {{选取昨日年月}} {{选取昨日年月日}}` | Uses the day before the calendar selection | `{{选取昨日年月日}}` |
+| `{{今日年}} {{今日年月}} {{今日年月日}}` | Calendar base date | `{{今日年月日}}` |
+| `{{昨日年}} {{昨日年月}} {{昨日年月日}}` | Day before the base date | `{{昨日年月日}}` |
+| `{{明日年}} {{明日年月}} {{明日年月日}}` | Day after the base date | `{{明日年月日}}` |
+| `{{本月年}} {{本月年月}}` | Base date's year or year-month | `{{本月年月}}` |
+| `{{上月年}} {{上月年月}}` | Previous month's year or year-month | `{{上月年月}}` |
+| `{{下月年}} {{下月年月}}` | Next month's year or year-month | `{{下月年月}}` |
+| `{{本月月首}} {{本月月末}}` | First or last day of the base date's month | `{{本月月末}}` |
 | `[[stringName]]` | Multi-line text, output as-is | `[[remarks]]` |
 
 ## Build
@@ -60,8 +63,8 @@ Building requires a JDK (with `javac` and `jar`); on success it generates `Templ
 ├── last_values.json        # Per-template memory of last input + last-used template (auto-generated after use)
 └── src/main/java/com/firefly/
     ├── Main.java                 # Program entry: sets high-DPI / system look-and-feel, launches the main window
-    ├── TemplateToolApp.java      # Main window: UI layout, event handling, data sync
-    ├── TemplateConstants.java    # Global constants: file names, automatic date variables, placeholders/regex, default example template
+    ├── TemplateToolApp.java      # Main window: UI layout, event handling, calendar base date, and data sync
+    ├── TemplateConstants.java    # Global constants: date variables and derivation, placeholders/regex, file names, default example template
     ├── core/                     # Logic layer: template read/write, parsing, rendering, evaluation, etc.
     │   ├── TemplateStore.java       # Reads/writes the Templates folder (list/read/write, generates example.txt and example.docx on first run)
     │   ├── ExpressionEvaluator.java # Safe arithmetic expression evaluation (+ - * / ** and parentheses; hand-written recursive-descent parser)
@@ -73,6 +76,7 @@ Building requires a JDK (with `javac` and `jar`); on success it generates `Templ
     │   ├── TextFileWriter.java      # Text file read/write (UTF-8 with BOM, converts newlines to CRLF, Notepad-compatible)
     │   └── ValueNormalizer.java     # Numeric input validation/normalization (blank is 0, non-numeric returns null)
     └── ui/                     # Swing UI components
+        ├── DatePickerPanel.java      # Base-date input and popup calendar (syncs to the system date at startup)
         ├── ResultPanel.java          # "Result Output" area (read-only multi-line text)
         ├── ScrollablePanel.java      # Scrollable vertical form panel (width adapts, height follows content)
         └── InputPanel.java           # "Variable/String Input" area (variables {{}} single-line, strings [[]] multi-line, with error highlighting)

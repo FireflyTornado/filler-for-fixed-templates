@@ -42,14 +42,16 @@ public final class DatePickerPanel extends JPanel {
     private final JPopupMenu popup = new JPopupMenu();
     private final PopupCalendar calendar;
     private final javax.swing.border.Border normalFieldBorder;
-    private LocalDate selectedDate = LocalDate.now();
+    private LocalDate selectedDate;
 
     public DatePickerPanel() {
         super(new BorderLayout(10, 0));
+        // 每次创建应用窗口时重新读取系统日期，避免沿用上次运行时的选择。
+        selectedDate = LocalDate.now();
         setBorder(BorderFactory.createEmptyBorder(2, 0, 2, 0));
 
         JPanel controls = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
-        controls.add(new JLabel("选取日期："));
+        controls.add(new JLabel("日期基准："));
         dateField.setText(DISPLAY_FORMAT.format(selectedDate));
         normalFieldBorder = dateField.getBorder();
         markInputValid();
@@ -58,7 +60,7 @@ public final class DatePickerPanel extends JPanel {
         controls.add(todayButton);
         add(controls, BorderLayout.WEST);
 
-        JLabel hint = new JLabel("用于 {{选取今日…}} / {{选取昨日…}} 日期变量");
+        JLabel hint = new JLabel("所有内置日期变量均以此日期为基准");
         hint.setForeground(HINT_COLOR);
         add(hint, BorderLayout.CENTER);
 
