@@ -32,6 +32,7 @@ public final class TemplateConstants {
                     "本月年", "本月年月",
                     "上月年", "上月年月",
                     "下月年", "下月年月",
+                    "本年", "上年", "下年",
                     "本月月首", "本月月末");
 
     /** 匹配 {{...}} 占位符；以 = 开头表示算术表达式（如 {{=数量*单价}}），否则内容按变量名处理 */
@@ -72,6 +73,9 @@ public final class TemplateConstants {
         map.put("上月年月", yearMonth(previousMonth));
         map.put("下月年", year(nextMonth));
         map.put("下月年月", yearMonth(nextMonth));
+        map.put("本年", year(selectedDay));
+        map.put("上年", year(selectedDay.minusYears(1)));
+        map.put("下年", year(selectedDay.plusYears(1)));
         map.put("本月月首", yearMonthDay(firstDayOfMonth));
         map.put("本月月末", yearMonthDay(lastDayOfMonth));
         return map;

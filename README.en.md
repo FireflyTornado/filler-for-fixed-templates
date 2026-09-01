@@ -10,7 +10,7 @@ A lightweight Java Swing desktop tool: fills pre-written fixed templates into co
 - **Addable strings** → `[[string]]` uses a large text input area, output as-is (including line breaks, spaces, formatting)
 - **Operator support** → a `=` prefix denotes an arithmetic expression, e.g. `{{=variable1/variable2}}`, supporting `+ - * / **` and parentheses, with results rounded to 2 decimal places
 - **Calendar base date** → all built-in date variables use the calendar selection as their base; every launch starts with the current system date, and you can type `yyyy-MM-dd` or use the popup calendar to change it
-- **Complete date derivation** → supports yesterday/today/tomorrow, previous/current/next month, and the first/last day of the current month, with automatic month, year, and leap-year handling
+- **Complete date derivation** → supports yesterday/today/tomorrow, previous/current/next month, previous/current/next year, and the first/last day of the current month, with automatic month, year, and leap-year handling
 - **Remembers last input** → each template remembers its last filled values, auto-saved to `last_values.json`, and auto-restored when that template is opened
 - **Multi-template management** → template files with any names are stored in the `Templates/` folder; you can switch via "Choose Template File…", "New Template", save changes back to the corresponding file with "Save Template", and the last-used template is remembered and restored on next startup
 - **Edit templates on the fly** → edit and save directly in the UI, or click "Open Folder" to edit with an external editor
@@ -41,6 +41,7 @@ A lightweight Java Swing desktop tool: fills pre-written fixed templates into co
 | `{{本月年}} {{本月年月}}` | Base date's year or year-month | `{{本月年月}}` |
 | `{{上月年}} {{上月年月}}` | Previous month's year or year-month | `{{上月年月}}` |
 | `{{下月年}} {{下月年月}}` | Next month's year or year-month | `{{下月年月}}` |
+| `{{上年}} {{本年}} {{下年}}` | Previous, current, or next year relative to the base date | `{{本年}}` |
 | `{{本月月首}} {{本月月末}}` | First or last day of the base date's month | `{{本月月末}}` |
 | `[[stringName]]` | Multi-line text, output as-is | `[[remarks]]` |
 
