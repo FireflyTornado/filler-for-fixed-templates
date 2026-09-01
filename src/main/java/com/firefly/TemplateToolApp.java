@@ -147,14 +147,14 @@ public final class TemplateToolApp extends JFrame {
         JScrollPane tplScroll = new JScrollPane(templateText);
         tplScroll.setBorder(BorderFactory.createEmptyBorder(8, 8, 0, 8));
         tplPanel.add(tplScroll, BorderLayout.CENTER);
-        datePicker = new DatePickerPanel();
-        tplPanel.add(datePicker, BorderLayout.EAST);
-        JPanel tplBottom = new JPanel(new BorderLayout(4, 0));
+        JPanel tplBottom = new JPanel(new BorderLayout(4, 4));
         tplBottom.setBorder(BorderFactory.createEmptyBorder(4, 8, 8, 8));
+        datePicker = new DatePickerPanel();
+        tplBottom.add(datePicker, BorderLayout.NORTH);
         JLabel tplHint = new JLabel(
                 "提示：日历日期用{{选取今日年月日}}/{{选取昨日年月日}}；系统日期用{{今日年月日}}/{{昨日年月日}}；字符串用[[字符串]]");
         tplHint.setForeground(Color.GRAY);
-        tplBottom.add(tplHint, BorderLayout.WEST);
+        tplBottom.add(tplHint, BorderLayout.SOUTH);
         tplPanel.add(tplBottom, BorderLayout.SOUTH);
         addRow(gc, 1, 0, GridBagConstraints.HORIZONTAL, tplPanel);
 
@@ -494,6 +494,13 @@ public final class TemplateToolApp extends JFrame {
 
         LocalDate today = LocalDate.now();
         LocalDate selectedDate = datePicker.getSelectedDate();
+        if (selectedDate == null) {
+            JOptionPane.showMessageDialog(this,
+                    "选取日期格式不正确，请输入有效日期，例如 2026-09-01。",
+                    "日期格式错误", JOptionPane.WARNING_MESSAGE);
+            setStatus("选取日期格式错误，未生成结果。");
+            return;
+        }
         Map<String, String> autoVals = TemplateConstants.autoValues(today, selectedDate);
         Map<String, String> stringValues = stringPanel.getValues();
         TemplateParser.ParsedTemplate parsed = TemplateParser.parse(currentTemplate);
