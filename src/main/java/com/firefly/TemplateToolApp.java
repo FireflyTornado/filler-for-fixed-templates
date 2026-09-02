@@ -59,6 +59,8 @@ public final class TemplateToolApp extends JFrame {
     private Map<String, VariableInputState> variableStates = new LinkedHashMap<>();
     /** 包含当前模板会话内暂时从解析结果消失的变量；切换模板后整体销毁。 */
     private final Map<String, VariableInputState> sessionVariableStates = new LinkedHashMap<>();
+    /** 本次运行中已从模板文件确认过的变量集合；退出时只检查这些模板。 */
+    private final Map<String, Set<String>> checkedTemplateVariables = new LinkedHashMap<>();
     private TemplateConfig persistedTemplateConfig = new TemplateConfig("");
     private TemplateHelpDialog helpDialog;
     private String fullStatusText = " ";
@@ -367,7 +369,9 @@ public final class TemplateToolApp extends JFrame {
         persistedTemplateConfig = templateConfigStore.load(name);
         setDecimalPlacesFromConfig();
         variableStates = new LinkedHashMap<>();
-        rebuildVariableStates(TemplateParser.parse(text));
+        TemplateParser.ParsedTemplate parsed = TemplateParser.parse(text);
+        rebuildVariableStates(parsed);
+        rememberCheckedVariables(name, parsed);
         invalidateResult(null);
         updateDirtyIndicator();
         rememberTemplate(name);
@@ -433,7 +437,9 @@ public final class TemplateToolApp extends JFrame {
         persistedTemplateConfig = templateConfigStore.load(name);
         setDecimalPlacesFromConfig();
         variableStates = new LinkedHashMap<>();
-        rebuildVariableStates(TemplateParser.parse(migratedText));
+        TemplateParser.ParsedTemplate parsed = TemplateParser.parse(migratedText);
+        rebuildVariableStates(parsed);
+        rememberCheckedVariables(name, parsed);
         invalidateResult(null);
         updateDirtyIndicator();
         setStatus("已转换 " + migrated.scan().count() + " 处旧写法；备份："
@@ -515,6 +521,7 @@ public final class TemplateToolApp extends JFrame {
         setDecimalPlacesFromConfig();
         variableStates = new LinkedHashMap<>();
         setDocxMode(false); setTemplateText(""); rebuildVariableStates(TemplateParser.parse(""));
+        checkedTemplateVariables.put(name, Set.of());
         invalidateResult(null); updateDirtyIndicator(); rememberTemplate(name);
         setStatus("新模板 " + name + " 尚未保存。");
     }
@@ -527,6 +534,7 @@ public final class TemplateToolApp extends JFrame {
         try {
             templateStore.writeTemplate(currentTemplateName, currentTemplate);
             lastDiskContent = currentTemplate; currentTemplateSaved = true;
+            rememberCheckedVariables(currentTemplateName, TemplateParser.parse(currentTemplate));
         } catch (IOException e) { showError("无法写入模板文件：\n" + e, "保存失败"); return false; }
         updateDirtyIndicator(); rememberTemplate(currentTemplateName);
         setStatus("模板已保存。", "模板已保存到：" + templateStore.templateFile(currentTemplateName));
@@ -547,14 +555,120 @@ public final class TemplateToolApp extends JFrame {
     }
 
     private void closeApplication() {
-        if (!confirmUnsaved("退出")) return;
+        templateSyncTimer.stop();
+        syncTemplate();
         templateConfigSaveTimer.stop();
+        if (hasUnsavedTemplateChanges()) {
+            int choice = showUnsavedExitDialog();
+            if (choice == 2 || choice == JOptionPane.CLOSED_OPTION) {
+                templateConfigSaveTimer.restart();
+                return;
+            }
+            if (choice == 0) {
+                if (!saveTemplateInternal(false) || !saveCurrentTemplateConfig(true)) return;
+                if (!cleanCheckedTemplateConfigs()) return;
+            } else {
+                if (!saveCurrentTemplateConfig(true)) return;
+            }
+            finishExit();
+            return;
+        }
+
         if (!saveCurrentTemplateConfig(true)) return;
+        TemplateConfigStore.CleanupReport report =
+                templateConfigStore.findUnusedVariables(checkedTemplateVariables);
+        if (!report.isEmpty()) {
+            int choice = showCleanupExitDialog(report);
+            if (choice == 2 || choice == JOptionPane.CLOSED_OPTION) return;
+            if (choice == 0 && !pruneTemplateConfigs(report)) return;
+        }
+        finishExit();
+    }
+
+    private int showUnsavedExitDialog() {
+        TemplateConfigStore.CleanupReport estimated = templateConfigStore.findUnusedVariables(
+                checkedVariablesIncludingCurrentText());
+        String count = estimated.isEmpty() ? "保存后将再次核对已检查模板的变量配置。"
+                : "当前发现 " + estimated.templateCount() + " 个模板包含 "
+                + estimated.variableCount() + " 个未使用变量。";
+        Object[] options = {"保存并退出（清理未使用变量）", "不保存并退出", "取消"};
+        return JOptionPane.showOptionDialog(this,
+                "当前模板有未保存的修改。\n\n"
+                        + "点击“保存并退出”后，将清理本次运行中已检查模板内所有未使用变量及其保存数据。\n"
+                        + count + "\n\n“不保存并退出”不会清理变量配置。",
+                "保存并退出", JOptionPane.DEFAULT_OPTION, JOptionPane.WARNING_MESSAGE,
+                null, options, options[0]);
+    }
+
+    private int showCleanupExitDialog(TemplateConfigStore.CleanupReport report) {
+        JTextArea details = new JTextArea(cleanupDetails(report), 8, 42);
+        details.setEditable(false);
+        details.setLineWrap(true);
+        details.setWrapStyleWord(true);
+        details.setCaretPosition(0);
+        JPanel panel = new JPanel(new BorderLayout(0, 8));
+        panel.add(new JLabel("本次运行中已检查的模板存在未使用变量，是否清理后退出？"), BorderLayout.NORTH);
+        panel.add(new JScrollPane(details), BorderLayout.CENTER);
+        Object[] options = {"清理并退出", "直接退出", "取消"};
+        return JOptionPane.showOptionDialog(this, panel, "清理未使用变量",
+                JOptionPane.DEFAULT_OPTION, JOptionPane.WARNING_MESSAGE,
+                null, options, options[0]);
+    }
+
+    private String cleanupDetails(TemplateConfigStore.CleanupReport report) {
+        StringBuilder text = new StringBuilder("将删除 ")
+                .append(report.templateCount()).append(" 个模板中的 ")
+                .append(report.variableCount()).append(" 个未使用变量及其保存数据：\n\n");
+        report.unusedVariables().forEach((template, names) -> text.append(template)
+                .append("：").append(String.join("、", names)).append('\n'));
+        return text.toString();
+    }
+
+    private Map<String, Set<String>> checkedVariablesIncludingCurrentText() {
+        Map<String, Set<String>> checked = new LinkedHashMap<>(checkedTemplateVariables);
+        if (!currentTemplateName.isEmpty()) {
+            checked.put(currentTemplateName,
+                    activeVariableNames(TemplateParser.parse(templateText.getText())));
+        }
+        return checked;
+    }
+
+    private boolean cleanCheckedTemplateConfigs() {
+        return pruneTemplateConfigs(templateConfigStore.findUnusedVariables(checkedTemplateVariables));
+    }
+
+    private boolean pruneTemplateConfigs(TemplateConfigStore.CleanupReport report) {
+        if (report.isEmpty()) return true;
+        try {
+            templateConfigStore.pruneUnusedVariables(report);
+            if (!currentTemplateName.isEmpty()) {
+                persistedTemplateConfig = templateConfigStore.load(currentTemplateName);
+            }
+            return true;
+        } catch (IOException | IllegalArgumentException e) {
+            showWarning("未使用变量清理失败，程序将保持打开：\n" + e, "清理失败");
+            setStatus("未使用变量清理失败，尚未退出。");
+            return false;
+        }
+    }
+
+    private void finishExit() {
         appConfig.setMainDividerLocation(mainSplit.getDividerLocation());
         appConfig.setPreviewResultDividerLocation(previewResultSplit.getDividerLocation());
         saveAppConfig(true);
         sessionVariableStates.clear();
         dispose(); System.exit(0);
+    }
+
+    private void rememberCheckedVariables(String templateName, TemplateParser.ParsedTemplate parsed) {
+        if (templateName == null || templateName.isEmpty()) return;
+        checkedTemplateVariables.put(templateName, activeVariableNames(parsed));
+    }
+
+    private static Set<String> activeVariableNames(TemplateParser.ParsedTemplate parsed) {
+        Set<String> names = new LinkedHashSet<>();
+        for (TemplateParser.VariableSpec variable : parsed.variables()) names.add(variable.name());
+        return Set.copyOf(names);
     }
 
     private void setTemplateText(String text) {

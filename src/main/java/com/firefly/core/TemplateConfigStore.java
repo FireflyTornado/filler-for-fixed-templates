@@ -5,10 +5,30 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /** Config/模板完整文件名.json 的安全路径、容错读取与原子写入。 */
 public final class TemplateConfigStore {
+    /** 退出前确认使用的清理清单；只包含已检查模板中不再使用的变量。 */
+    public record CleanupReport(Map<String, List<String>> unusedVariables) {
+        public CleanupReport {
+            Map<String, List<String>> copy = new LinkedHashMap<>();
+            if (unusedVariables != null) {
+                unusedVariables.forEach((template, names) ->
+                        copy.put(template, List.copyOf(names)));
+            }
+            unusedVariables = java.util.Collections.unmodifiableMap(copy);
+        }
+
+        public boolean isEmpty() { return unusedVariables.isEmpty(); }
+        public int templateCount() { return unusedVariables.size(); }
+        public int variableCount() {
+            return unusedVariables.values().stream().mapToInt(List::size).sum();
+        }
+    }
+
     private final Path configDir;
 
     public TemplateConfigStore(Path appDir) {
@@ -110,6 +130,30 @@ public final class TemplateConfigStore {
                     state.type(), state.value()));
         }
         saveConfig(merged);
+    }
+
+    /**
+     * 仅检查调用方已确认过内容的模板。这里不读取模板文件，因此退出耗时与模板总数无关。
+     */
+    public CleanupReport findUnusedVariables(Map<String, ? extends Set<String>> activeVariables) {
+        Map<String, List<String>> unused = new LinkedHashMap<>();
+        for (Map.Entry<String, ? extends Set<String>> checked : activeVariables.entrySet()) {
+            if (!exists(checked.getKey())) continue;
+            Set<String> active = checked.getValue() == null ? Set.of() : checked.getValue();
+            List<String> names = load(checked.getKey()).variables().keySet().stream()
+                    .filter(name -> !active.contains(name))
+                    .toList();
+            if (!names.isEmpty()) unused.put(checked.getKey(), names);
+        }
+        return new CleanupReport(unused);
+    }
+
+    /** 按已确认清单删除变量；再次载入后只删除清单中的名称，避免误删后来新增的数据。 */
+    public void pruneUnusedVariables(CleanupReport report) throws IOException {
+        for (Map.Entry<String, List<String>> item : report.unusedVariables().entrySet()) {
+            TemplateConfig config = load(item.getKey());
+            if (config.variables().keySet().removeAll(item.getValue())) saveConfig(config);
+        }
     }
 
     public void saveConfig(TemplateConfig config) throws IOException {
