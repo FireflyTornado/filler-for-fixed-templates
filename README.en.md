@@ -18,8 +18,10 @@ A lightweight Java Swing desktop tool with a unified variable system for filling
 - **Per-template configuration** → application state is stored in `config.json`, while each template keeps its own values, selected types, and decimal places in `Config/<full-template-name>.json`; on exit, you can confirm cleanup of unused variables in templates checked during the current session
 - **Safe legacy migration** → existing `last_values.json` data is migrated once in read-only mode and the legacy file is never modified or deleted; new configuration writes use temporary files and atomic replacement where supported
 - **Generated-result protection** → changing the template, variable value, variable type, or base date immediately invalidates the old result and disables copying or saving it
+- **General background file tasks** → template initialization, loading, importing, saving, refreshing, and migration, plus result generation and export, run in the background; a fixed status-bar area shows the current phase, progress, and an always-present Cancel button, while operation-based status text stays consistent across TXT and DOCX files
+- **Safe template loading state** → switching or refreshing handles unsaved edits first, then locks the template workspace while progress is shown; success swaps the complete session at once, while failure or cancellation restores the previous template
 - **Error navigation and accessibility** → numeric and date errors update live with non-color indicators; use “Locate Error” or `F4` to cycle through them, plus `F1` for help, `Ctrl+Enter` to generate, and `Ctrl+S` to save the template
-- **Modeless help window** → includes syntax guidance, every built-in date variable, and a live current-template variable inventory without blocking the main window
+- **Modeless help window** → includes syntax guidance, a calculation guide, every built-in date variable, and a live current-template variable inventory without blocking the main window
 - **Multi-template management** → template files with any names are stored in the `Templates/` folder; you can switch via "Choose Template File…", "New Template", save changes back to the corresponding file with "Save Template", and the last-used template is remembered and restored on next startup
 - **Edit templates on the fly** → edit and save directly in the UI, or click "Open Folder" to edit with an external editor
 - **Manual template refresh** → reload the current template after editing it externally, with a warning before discarding unsaved in-app changes
@@ -34,13 +36,22 @@ A lightweight Java Swing desktop tool with a unified variable system for filling
 1. Double-click `launcher.bat`
 2. Or run `java -jar TemplateTool.jar` in a command line
 
-**Edit templates**: templates are plain-text files inside the `Templates/` folder. Click "Choose Template File…" in the top bar to pick the template to use, edit in the area below, then click "Save Template" to write back to that file; "New Template" creates a new file; "Open Folder" opens the templates folder for direct template file management.
+**Edit templates**: templates are stored in the `Templates/` folder and may be `.txt` or `.docx`. Text templates can be edited and saved directly in the app. Word templates are read-only in the app and must be edited in Word or another external editor, then refreshed or reopened. "New Template" creates `.txt` files only, while "Open Folder" lets you manage every template file directly.
 
 **Fill variables**: every variable name appears only once in the right-hand form. Ordinary variables can switch among all three types; expression variables remain Numeric. Use `−` / `+` at the top to adjust decimal places for the current template. Multi-line edits are committed only when the dialog is confirmed.
 
 **Keyboard shortcuts**: `Tab` in a variable value field moves to the next variable value; `Ctrl+Enter` generates the result, `Ctrl+S` saves a text template, `F1` opens help, and `F4` cycles through input errors. Auxiliary dialogs close with `Esc`.
 
 **Use a Word template**: use `{{variable}}` in Word. A `.docx` template is shown as a read-only preview. Export the generated document with “Save Result to File.”
+
+### File Tasks and Progress
+
+- Initialization, loading, importing, saving, refreshing, legacy-syntax conversion, result generation, and result export run as background file tasks, so long operations do not block the entire main window.
+- The status area uses operation-based labels such as “Load Template,” “Save Template,” and “Generate Result” instead of separate TXT and DOCX wording. These labels are defined centrally by `FileOperationText`.
+- The progress area has a fixed position and size. Its Cancel button is always present and is disabled automatically when the current task cannot be cancelled.
+- Loading, refreshing, or switching templates temporarily disables only the template-related workspace. A failed or cancelled load preserves the previous template and its input state.
+- You may continue editing the template, date, and variables during generation and may keep using an existing result. Each generation uses a snapshot captured when it starts; if inputs change before it finishes, the status explicitly marks the completed result as inconsistent with the current inputs.
+- If switching, creating, or refreshing a template would affect an active generation task, the app asks before cancelling it instead of interrupting it silently.
 
 ## Variable Syntax
 
@@ -124,14 +135,16 @@ Double-click `build.bat`, or run in a command line:
 build.bat
 ```
 
-Building requires a JDK (with `javac` and `jar`). The build script runs the regression tests first, then generates `TemplateTool.jar` on success.
+Building requires JDK 17 or later (with `javac` and `jar`). The script clears stale `out/` and `out-test/` directories, recompiles the application, runs all regression tests, and generates `TemplateTool.jar` only after the tests pass.
 
 ## Project Structure
 
 ```
 ├── build.bat                      # Compiles, tests, and packages TemplateTool.jar
 ├── launcher.bat                   # One-click Windows launcher
+├── .gitignore                     # Excludes build output, runtime state, and editor files
 ├── TemplateTool.jar               # Runnable application generated by build.bat
+├── out/ / out-test/               # Generated application and test class files
 ├── README.md / README.en.md       # Chinese and English documentation
 ├── LICENSE                        # MIT license
 ├── Templates/                     # Created automatically on first run; stores templates and migration backups
@@ -157,6 +170,8 @@ Building requires a JDK (with `javac` and `jar`). The build script runs the regr
 │   │   ├── AppConfig*.java          # Application configuration model and storage
 │   │   ├── TemplateConfig*.java     # Per-template variable and decimal-place configuration
 │   │   ├── AtomicConfigWriter.java  # Temporary writes and atomic config replacement
+│   │   ├── OperationProgress.java   # Core file-operation progress callback
+│   │   ├── FileOperationText.java   # Shared status text for loading, saving, generation, and other background tasks
 │   │   ├── JsonData.java / MiniJson.java # JSON support
 │   │   └── LegacyConfigMigrator.java / LastValuesStore.java # Legacy config migration
 │   └── ui/
@@ -166,12 +181,16 @@ Building requires a JDK (with `javac` and `jar`). The build script runs the regr
 │       ├── MultilineEditorDialog.java # Multi-line text editor
 │       ├── VariableTypeConversionDialog.java # Type-conversion confirmation
 │       ├── ResultPanel.java          # Result preview
+│       ├── FileTaskManager.java / FileTaskProgressPanel.java # Background tasks and fixed progress area
+│       ├── TemplateBusyLayerUI.java  # Workspace blocking layer for exclusive template tasks
 │       ├── TemplateHelpDialog.java   # Syntax, date, and variable help
 │       ├── UiFontManager.java / FontScalePreset.java # Font scaling
 │       └── ValidationIssue*.java / IssueSeverity.java # Issue tracking and navigation
 └── test/java/com/firefly/
     └── TemplateFeatureTests.java    # Variable, numeric-format, Word, config, and migration tests
 ```
+
+The project has no Maven, Gradle, or third-party-library dependency. Production code follows the `src/main/java` layout; regression tests use the project's custom `test/java` directory and are compiled directly by `build.bat`. `TemplateTool.jar`, `out/`, `out-test/`, `Templates/`, `Config/`, and runtime configuration files are generated artifacts or local data and are excluded by `.gitignore`. If the project later adopts Maven or Gradle, the tests can be moved to the conventional `src/test/java`; no such move is needed for the current build.
 
 ## License
 

@@ -21,6 +21,7 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InterruptedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -105,6 +106,10 @@ public final class DocxProcessor {
      * 页眉/页脚/脚注/尾注/批注的文本也会包含在内（保证里面的占位符也能生成输入框）。
      */
     public static String extractText(Path docx) throws IOException {
+        return extractText(docx, OperationProgress.NONE);
+    }
+
+    public static String extractText(Path docx, OperationProgress progress) throws IOException {
         StringBuilder sb = new StringBuilder();
         try (ZipFile zf = new ZipFile(docx.toFile(), StandardCharsets.UTF_8)) {
             List<String> parts = new ArrayList<>();
@@ -117,13 +122,19 @@ public final class DocxProcessor {
             }
             parts.sort(Comparator.comparingInt(DocxProcessor::partRank)
                     .thenComparing(Comparator.naturalOrder()));
-            for (String p : parts) {
+            progress.update(FileOperationText.LOAD_TEMPLATE.inProgress(),
+                    0, Math.max(1, parts.size()));
+            for (int index = 0; index < parts.size(); index++) {
+                checkCancelled();
+                String p = parts.get(index);
                 if (sb.length() > 0) {
                     sb.append('\n');
                 }
                 try (InputStream in = zf.getInputStream(zf.getEntry(p))) {
                     sb.append(partText(in));
                 }
+                progress.update(FileOperationText.LOAD_TEMPLATE.inProgress(),
+                        index + 1, Math.max(1, parts.size()));
             }
         }
         return sb.toString();
@@ -187,11 +198,24 @@ public final class DocxProcessor {
                                                        Map<String, String> autoVals,
                                                        Set<String> numericVariables,
                                                        int decimalPlaces) throws IOException {
+        return render(src, dst, values, autoVals, numericVariables, decimalPlaces,
+                OperationProgress.NONE);
+    }
+
+    public static TemplateRenderer.RenderResult render(Path src, Path dst,
+                                                       Map<String, String> values,
+                                                       Map<String, String> autoVals,
+                                                       Set<String> numericVariables,
+                                                       int decimalPlaces,
+                                                       OperationProgress progress) throws IOException {
         try {
             try (ZipFile zin = new ZipFile(src.toFile(), StandardCharsets.UTF_8);
                  ZipOutputStream zout = new ZipOutputStream(Files.newOutputStream(dst), StandardCharsets.UTF_8)) {
                 Enumeration<? extends ZipEntry> en = zin.entries();
+                int total = Math.max(1, zin.size()), completed = 0;
+                progress.update(FileOperationText.GENERATE_RESULT.inProgress(), 0, total + 1L);
                 while (en.hasMoreElements()) {
+                    checkCancelled();
                     ZipEntry e = en.nextElement();
                     ZipEntry out = new ZipEntry(e.getName());
                     out.setTime(e.getTime());
@@ -209,13 +233,19 @@ public final class DocxProcessor {
                         }
                     }
                     zout.closeEntry();
+                    progress.update(FileOperationText.GENERATE_RESULT.inProgress(),
+                            ++completed, total + 1L);
                 }
             }
         } catch (ExpressionEvaluator.EvalException ex) {
             Files.deleteIfExists(dst);
             return new TemplateRenderer.RenderResult(null, ex.getMessage());
         }
-        return new TemplateRenderer.RenderResult(extractText(dst), null);
+        checkCancelled();
+        progress.update(FileOperationText.GENERATE_RESULT.inProgress(), 0, 0);
+        TemplateRenderer.RenderResult result = new TemplateRenderer.RenderResult(extractText(dst), null);
+        progress.update(FileOperationText.GENERATE_RESULT.inProgress(), 1, 1);
+        return result;
     }
 
     /** 统一变量入口。 */
@@ -235,12 +265,30 @@ public final class DocxProcessor {
         return render(src, dst, values, autoVals, numericVariables, decimalPlaces);
     }
 
+    public static TemplateRenderer.RenderResult renderUnified(Path src, Path dst,
+                                                               Map<String, String> values,
+                                                               Map<String, String> autoVals,
+                                                               Set<String> numericVariables,
+                                                               int decimalPlaces,
+                                                               OperationProgress progress)
+            throws IOException {
+        return render(src, dst, values, autoVals, numericVariables, decimalPlaces, progress);
+    }
+
     /** 将 Word 各文本部件中的 [[变量]] 改成 {{变量}}，包括跨 run 的占位符。 */
     public static void migrateLegacyPlaceholders(Path src, Path dst) throws IOException {
+        migrateLegacyPlaceholders(src, dst, OperationProgress.NONE);
+    }
+
+    public static void migrateLegacyPlaceholders(Path src, Path dst, OperationProgress progress)
+            throws IOException {
         try (ZipFile zin = new ZipFile(src.toFile(), StandardCharsets.UTF_8);
              ZipOutputStream zout = new ZipOutputStream(Files.newOutputStream(dst), StandardCharsets.UTF_8)) {
             Enumeration<? extends ZipEntry> en = zin.entries();
+            int total = Math.max(1, zin.size()), completed = 0;
+            progress.update(FileOperationText.CONVERT_TEMPLATE.inProgress(), 0, total);
             while (en.hasMoreElements()) {
+                checkCancelled();
                 ZipEntry entry = en.nextElement();
                 ZipEntry output = new ZipEntry(entry.getName());
                 output.setTime(entry.getTime());
@@ -253,7 +301,14 @@ public final class DocxProcessor {
                     }
                 }
                 zout.closeEntry();
+                progress.update(FileOperationText.CONVERT_TEMPLATE.inProgress(), ++completed, total);
             }
+        }
+    }
+
+    private static void checkCancelled() throws InterruptedIOException {
+        if (Thread.currentThread().isInterrupted()) {
+            throw new InterruptedIOException("操作已取消");
         }
     }
 

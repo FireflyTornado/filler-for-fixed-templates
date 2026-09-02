@@ -10,6 +10,9 @@ import com.firefly.ui.ValidationIssue;
 import com.firefly.ui.ValidationIssueManager;
 import com.firefly.ui.FontScalePreset;
 import com.firefly.ui.UiFontManager;
+import com.firefly.ui.FileTaskManager;
+import com.firefly.ui.FileTaskProgressPanel;
+import com.firefly.ui.TemplateBusyLayerUI;
 
 import javax.swing.*;
 import javax.swing.Timer;
@@ -23,6 +26,9 @@ import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -47,14 +53,18 @@ public final class TemplateToolApp extends JFrame {
     private DatePickerPanel datePicker;
     private VariableInputPanel variablePanel;
     private ResultPanel resultPanel;
-    private JButton newBtn, saveTplBtn, generateBtn, copyBtn, saveResultBtn, helpBtn;
+    private JButton chooseBtn, openFolderBtn, newBtn, saveTplBtn, generateBtn, copyBtn, saveResultBtn, helpBtn;
     private JButton refreshTemplateBtn, fontScaleBtn;
     private TitledBorder templateBorder;
     private JPanel templatePanel;
     private JSplitPane mainSplit, previewResultSplit;
+    private FileTaskProgressPanel fileTaskProgress;
+    private FileTaskManager fileTasks;
+    private TemplateBusyLayerUI templateBusyLayerUI;
+    private JLayer<JComponent> templateBusyLayer;
 
     private String currentTemplateName = "", currentTemplate = "", lastDiskContent = "";
-    private boolean currentTemplateSaved, docxMode, resultValid, programmaticUpdate;
+    private boolean currentTemplateSaved, docxMode, resultValid, currentResultDocx, programmaticUpdate;
     private Path currentDocxResult;
     private Map<String, VariableInputState> variableStates = new LinkedHashMap<>();
     /** 包含当前模板会话内暂时从解析结果消失的变量；切换模板后整体销毁。 */
@@ -66,6 +76,15 @@ public final class TemplateToolApp extends JFrame {
     private String fullStatusText = " ";
     private FontScalePreset fontScalePreset;
     private boolean initializationScheduled;
+    private long templateRevision, inputRevision, generationSequence;
+    private Long activeGenerationId;
+
+    private static final String TASK_INITIALIZE = "initialize";
+    private static final String TASK_LOAD_TEMPLATE = "load-template";
+    private static final String TASK_SAVE_TEMPLATE = "save-template";
+    private static final String TASK_MIGRATE_TEMPLATE = "migrate-template";
+    private static final String TASK_GENERATE = "generate-result";
+    private static final String TASK_EXPORT = "export-result";
 
     public TemplateToolApp(Path appDir) {
         super("模板填充工具");
@@ -115,7 +134,9 @@ public final class TemplateToolApp extends JFrame {
         mainSplit.setResizeWeight(0.58);
         mainSplit.setContinuousLayout(true);
         mainSplit.setOneTouchExpandable(true);
-        root.add(mainSplit, BorderLayout.CENTER);
+        templateBusyLayerUI = new TemplateBusyLayerUI();
+        templateBusyLayer = new JLayer<>(mainSplit, templateBusyLayerUI);
+        root.add(templateBusyLayer, BorderLayout.CENTER);
         JPanel statusBar = new JPanel(new BorderLayout(6, 0));
         statusBar.setBorder(BorderFactory.createCompoundBorder(
                 BorderFactory.createMatteBorder(1, 0, 0, 0, Color.LIGHT_GRAY),
@@ -126,13 +147,20 @@ public final class TemplateToolApp extends JFrame {
             @Override public void componentResized(java.awt.event.ComponentEvent e) { refreshStatusLabel(); }
         });
         statusBar.add(statusLabel, BorderLayout.CENTER);
+        JPanel statusActions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 5, 0));
+        fileTaskProgress = new FileTaskProgressPanel();
+        fileTasks = new FileTaskManager(fileTaskProgress);
+        fileTasks.setTemplateLockListener(locked -> templateBusyLayerUI.setBusy(
+                templateBusyLayer, locked, "正在处理模板，请稍候…"));
+        statusActions.add(fileTaskProgress);
         fontScaleBtn = new JButton(fontScaleButtonText());
         fontScaleBtn.setMnemonic('Z');
         fontScaleBtn.setMargin(new Insets(1, 7, 1, 7));
         fontScaleBtn.setToolTipText("调节界面字号（Ctrl+加号/减号，Ctrl+0 跟随系统）");
         fontScaleBtn.getAccessibleContext().setAccessibleName("调节界面字号");
         fontScaleBtn.addActionListener(e -> showFontScaleMenu());
-        statusBar.add(fontScaleBtn, BorderLayout.EAST);
+        statusActions.add(fontScaleBtn);
+        statusBar.add(statusActions, BorderLayout.EAST);
         root.add(statusBar, BorderLayout.SOUTH);
     }
 
@@ -181,7 +209,8 @@ public final class TemplateToolApp extends JFrame {
         info.add(templateNameLabel);
         toolbar.add(info, BorderLayout.NORTH);
         JPanel buttons = new JPanel(new GridLayout(0, 3, 5, 4));
-        JButton choose = new JButton("选择模板文件…"), open = new JButton("打开文件夹");
+        chooseBtn = new JButton("选择模板文件…");
+        openFolderBtn = new JButton("打开文件夹");
         newBtn = new JButton("新建模板"); saveTplBtn = new JButton("保存模板");
         helpBtn = new JButton("帮助");
         refreshTemplateBtn = new JButton("刷新模板");
@@ -191,13 +220,13 @@ public final class TemplateToolApp extends JFrame {
         helpBtn.setMnemonic('H');
         helpBtn.setToolTipText("模板变量语法和当前模板变量（F1）");
         helpBtn.getAccessibleContext().setAccessibleName("打开模板变量帮助");
-        buttons.add(choose); buttons.add(newBtn); buttons.add(saveTplBtn);
-        buttons.add(open); buttons.add(refreshTemplateBtn); buttons.add(helpBtn);
+        buttons.add(chooseBtn); buttons.add(newBtn); buttons.add(saveTplBtn);
+        buttons.add(openFolderBtn); buttons.add(refreshTemplateBtn); buttons.add(helpBtn);
         toolbar.add(buttons, BorderLayout.SOUTH);
-        choose.addActionListener(e -> chooseTemplate());
+        chooseBtn.addActionListener(e -> chooseTemplate());
         newBtn.addActionListener(e -> newTemplate());
         saveTplBtn.addActionListener(e -> saveTemplate());
-        open.addActionListener(e -> openTemplatesFolder());
+        openFolderBtn.addActionListener(e -> openTemplatesFolder());
         refreshTemplateBtn.addActionListener(e -> refreshCurrentTemplate());
         helpBtn.addActionListener(e -> showHelp());
         return toolbar;
@@ -213,6 +242,7 @@ public final class TemplateToolApp extends JFrame {
         variablePanel.setCommitListener(() -> saveCurrentTemplateConfig(false));
         variablePanel.setDecimalPlacesListener(decimalPlaces -> {
             if (!programmaticUpdate) {
+                inputRevision++;
                 invalidateResult("小数位数已改为 " + decimalPlaces + " 位，请重新生成。");
                 templateConfigSaveTimer.restart();
             }
@@ -229,6 +259,7 @@ public final class TemplateToolApp extends JFrame {
         });
         variablePanel.setChangeListener(() -> {
             if (!programmaticUpdate) {
+                inputRevision++;
                 invalidateResult("内容已修改，请重新生成。");
                 templateConfigSaveTimer.restart();
                 if (helpDialog != null) helpDialog.refreshIfVisible();
@@ -236,6 +267,7 @@ public final class TemplateToolApp extends JFrame {
         });
         datePicker.setChangeListener(() -> {
             if (!programmaticUpdate) {
+                inputRevision++;
                 refreshDateValidation();
                 invalidateResult("内容已修改，请重新生成。");
             }
@@ -279,20 +311,30 @@ public final class TemplateToolApp extends JFrame {
     }
 
     private void initTemplates(Path appDir) {
-        try {
-            templateStore.ensureTemplatesExist();
-            templateConfigStore.ensureDirectory();
-            new LegacyConfigMigrator(appDir, templateStore, templateConfigStore)
-                    .migrateIfNeeded(appConfig, appConfigExisted);
-            appConfigStore.save(appConfig);
-        } catch (IOException e) {
-            showError("无法初始化配置或模板文件夹：\n" + e, "初始化失败");
-        }
-        List<String> names = templateStore.listTemplateNames();
-        String load = findNameIgnoreCase(names, appConfig.lastTemplate());
-        if (load == null && !names.isEmpty()) load = names.get(0);
-        if (load == null) setStatus("Templates 文件夹为空，无法加载模板。");
-        else loadTemplate(load);
+        fileTasks.submit(TASK_INITIALIZE, FileOperationText.INITIALIZE.taskName(),
+                FileTaskManager.LockScope.TEMPLATE, false,
+                progress -> {
+                    progress.update("正在准备模板文件夹", 5, 100);
+                    templateStore.ensureTemplatesExist();
+                    progress.checkpoint();
+                    progress.update("正在准备配置文件夹", 35, 100);
+                    templateConfigStore.ensureDirectory();
+                    progress.update("正在迁移旧配置", 55, 100);
+                    new LegacyConfigMigrator(appDir, templateStore, templateConfigStore)
+                            .migrateIfNeeded(appConfig, appConfigExisted);
+                    progress.checkpoint();
+                    appConfigStore.save(appConfig);
+                    progress.update("正在扫描模板", 85, 100);
+                    List<String> names = templateStore.listTemplateNames();
+                    String load = findNameIgnoreCase(names, appConfig.lastTemplate());
+                    if (load == null && !names.isEmpty()) load = names.get(0);
+                    progress.update("初始化完成", 100, 100);
+                    return load;
+                }, load -> {
+                    if (load == null) setStatus("Templates 文件夹为空，无法加载模板。");
+                    else loadTemplateAsync(load, null);
+                }, error -> showError("无法初始化配置或模板文件夹：\n" + error, "初始化失败"),
+                () -> setStatus("初始化已取消。"));
     }
 
     private void restoreDividerLocations() {
@@ -302,6 +344,7 @@ public final class TemplateToolApp extends JFrame {
 
     private void templateEdited() {
         if (programmaticUpdate) return;
+        templateRevision++;
         invalidateResult("内容已修改，请重新生成。");
         updateDirtyIndicator();
         templateSyncTimer.restart();
@@ -351,46 +394,81 @@ public final class TemplateToolApp extends JFrame {
         if (helpDialog != null) helpDialog.refreshIfVisible();
     }
 
-    private boolean loadTemplate(String name) {
-        boolean word = DocxProcessor.isDocxName(name);
-        String text;
-        try {
-            text = word ? DocxProcessor.extractText(templateStore.templateFile(name))
-                    : templateStore.readTemplate(name);
-        } catch (IOException e) { showError("无法读取模板文件：\n" + e, "读取失败"); return false; }
+    private record LoadedTemplate(String name, boolean word, String text,
+                                  TemplateConfig config,
+                                  TemplateParser.ParsedTemplate parsed,
+                                  LegacyTemplateMigrator.Scan legacy) { }
+
+    private void loadTemplateAsync(String name, Runnable afterSuccess) {
+        if (name == null || name.isBlank()) return;
         templateConfigSaveTimer.stop();
-        if (!currentTemplateName.isEmpty() && !saveCurrentTemplateConfig(true)) return false;
+        if (!currentTemplateName.isEmpty() && !saveCurrentTemplateConfig(true)) return;
+        boolean word = DocxProcessor.isDocxName(name);
+        fileTasks.submit(TASK_LOAD_TEMPLATE, FileOperationText.LOAD_TEMPLATE.taskName(),
+                FileTaskManager.LockScope.TEMPLATE, true,
+                progress -> {
+                    Path file = templateStore.templateFile(name);
+                    progress.update(FileOperationText.LOAD_TEMPLATE.inProgress(), 0, word ? 0 : 100);
+                    String text;
+                    if (word) {
+                        text = DocxProcessor.extractText(file,
+                                (phase, completed, total) -> progress.update(phase,
+                                        total <= 0 ? 0 : completed * 75 / total, 100));
+                    } else {
+                        text = templateStore.readTemplate(name);
+                        progress.update(FileOperationText.LOAD_TEMPLATE.inProgress(), 65, 100);
+                    }
+                    progress.checkpoint();
+                    TemplateConfig config = templateConfigStore.load(name);
+                    progress.update("正在解析模板变量", 85, 100);
+                    TemplateParser.ParsedTemplate parsed = TemplateParser.parse(text);
+                    LegacyTemplateMigrator.Scan legacy = LegacyTemplateMigrator.scan(text);
+                    progress.update("模板加载完成", 100, 100);
+                    return new LoadedTemplate(name, word, text, config, parsed, legacy);
+                }, loaded -> {
+                    applyLoadedTemplate(loaded);
+                    if (afterSuccess != null) afterSuccess.run();
+                }, error -> {
+                    showError("无法读取模板文件：\n" + error, "读取失败");
+                    setStatus("模板加载失败，已保留原模板。");
+                }, () -> setStatus("模板加载已取消，已保留原模板。"));
+    }
+
+    private void applyLoadedTemplate(LoadedTemplate loaded) {
         sessionVariableStates.clear();
-        currentTemplateName = name; currentTemplate = text; lastDiskContent = text;
+        currentTemplateName = loaded.name();
+        currentTemplate = loaded.text();
+        lastDiskContent = loaded.text();
         issueManager.clear();
         currentTemplateSaved = true;
-        setTemplateText(text);
-        setDocxMode(word);
-        persistedTemplateConfig = templateConfigStore.load(name);
+        setTemplateText(loaded.text());
+        setDocxMode(loaded.word());
+        persistedTemplateConfig = loaded.config();
         setDecimalPlacesFromConfig();
         variableStates = new LinkedHashMap<>();
-        TemplateParser.ParsedTemplate parsed = TemplateParser.parse(text);
-        rebuildVariableStates(parsed);
-        rememberCheckedVariables(name, parsed);
+        rebuildVariableStates(loaded.parsed());
+        rememberCheckedVariables(loaded.name(), loaded.parsed());
         invalidateResult(null);
+        templateRevision++;
+        inputRevision++;
         updateDirtyIndicator();
-        rememberTemplate(name);
-        setStatus("已加载模板：" + name + (word ? "（Word 模板，只读预览）" : ""));
+        rememberTemplate(loaded.name());
+        setStatus("已加载模板：" + loaded.name()
+                + (loaded.word() ? "（Word 模板，只读预览）" : ""));
 
         // 先让模板名称、正文和变量面板完成一次绘制，再询问是否迁移当前模板。
-        LegacyTemplateMigrator.Scan legacy = LegacyTemplateMigrator.scan(text);
-        if (legacy.found()) {
-            String displayedText = text;
+        if (loaded.legacy().found()) {
+            String displayedText = loaded.text();
             SwingUtilities.invokeLater(() -> {
-                if (!name.equals(currentTemplateName)
+                if (!loaded.name().equals(currentTemplateName)
                         || !displayedText.equals(currentTemplate)
                         || !displayedText.equals(lastDiskContent)) return;
                 templateNameLabel.paintImmediately(templateNameLabel.getVisibleRect());
                 templateText.paintImmediately(templateText.getVisibleRect());
-                promptLegacyTemplateMigration(name, word, displayedText, legacy);
+                promptLegacyTemplateMigration(loaded.name(), loaded.word(), displayedText,
+                        loaded.legacy());
             });
         }
-        return true;
     }
 
     private void promptLegacyTemplateMigration(String name, boolean word, String originalText,
@@ -409,41 +487,51 @@ public final class TemplateToolApp extends JFrame {
             return;
         }
 
-        LegacyTemplateMigrator.MigrationResult migrated;
-        String migratedText;
-        try {
-            migrated = LegacyTemplateMigrator.migrate(
-                    templateStore.templateFile(name), word, originalText);
-            migratedText = word ? DocxProcessor.extractText(templateStore.templateFile(name))
-                    : templateStore.readTemplate(name);
-        } catch (IOException e) {
-            showError("旧模板语法转换失败，原模板未被替换：\n" + e, "转换失败");
-            setStatus("模板“" + name + "”的旧语法转换失败。");
-            return;
-        }
-        try {
-            preserveMigratedVariableTypes(name, originalText, migrated.scan().variableNames());
-        } catch (IOException e) {
-            showWarning("模板语法已转换，但无法保存原有的多行文本类型：\n" + e,
-                    "变量类型未保存");
-        }
+        fileTasks.submit(TASK_MIGRATE_TEMPLATE, FileOperationText.CONVERT_TEMPLATE.taskName(),
+                FileTaskManager.LockScope.TEMPLATE, false,
+                progress -> {
+                    LegacyTemplateMigrator.MigrationResult migrated = LegacyTemplateMigrator.migrate(
+                            templateStore.templateFile(name), word, originalText,
+                            (phase, completed, total) -> progress.update(phase, completed, total));
+                    progress.checkpoint();
+                    String migratedText = word
+                            ? DocxProcessor.extractText(templateStore.templateFile(name),
+                                (phase, completed, total) -> progress.update(
+                                        FileOperationText.LOAD_TEMPLATE.inProgress(),
+                                        80 + (total <= 0 ? 0 : completed * 15 / total), 100))
+                            : templateStore.readTemplate(name);
+                    preserveMigratedVariableTypes(name, originalText, migrated.scan().variableNames());
+                    TemplateConfig config = templateConfigStore.load(name);
+                    TemplateParser.ParsedTemplate parsed = TemplateParser.parse(migratedText);
+                    return new MigratedTemplate(migrated, migratedText, config, parsed);
+                }, result -> applyMigratedTemplate(name, result), error -> {
+                    showError("旧模板语法转换失败，原模板未被替换：\n" + error, "转换失败");
+                    setStatus("模板“" + name + "”的旧语法转换失败。");
+                }, () -> setStatus("模板语法转换已取消。"));
+    }
 
-        // 对话框为模态窗口，确认期间当前模板不会切换；迁移后刷新同一份预览和变量配置。
-        currentTemplate = migratedText;
-        lastDiskContent = migratedText;
+    private record MigratedTemplate(LegacyTemplateMigrator.MigrationResult migration,
+                                    String text, TemplateConfig config,
+                                    TemplateParser.ParsedTemplate parsed) { }
+
+    private void applyMigratedTemplate(String name, MigratedTemplate result) {
+        if (!name.equals(currentTemplateName)) return;
+        currentTemplate = result.text();
+        lastDiskContent = result.text();
         currentTemplateSaved = true;
         issueManager.clear();
-        setTemplateText(migratedText);
-        persistedTemplateConfig = templateConfigStore.load(name);
+        setTemplateText(result.text());
+        persistedTemplateConfig = result.config();
         setDecimalPlacesFromConfig();
         variableStates = new LinkedHashMap<>();
-        TemplateParser.ParsedTemplate parsed = TemplateParser.parse(migratedText);
-        rebuildVariableStates(parsed);
-        rememberCheckedVariables(name, parsed);
+        rebuildVariableStates(result.parsed());
+        rememberCheckedVariables(name, result.parsed());
         invalidateResult(null);
+        templateRevision++;
+        inputRevision++;
         updateDirtyIndicator();
-        setStatus("已转换 " + migrated.scan().count() + " 处旧写法；备份："
-                + migrated.backup().getFileName());
+        setStatus("已转换 " + result.migration().scan().count() + " 处旧写法；备份："
+                + result.migration().backup().getFileName());
     }
 
     /** 仅为过去只使用 [[变量]] 且没有保存类型的变量保留多行文本默认值。 */
@@ -485,21 +573,42 @@ public final class TemplateToolApp extends JFrame {
         if (chooser.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) return;
         File selected = chooser.getSelectedFile();
         if (!isSupportedTemplateName(selected.getName())) { showWarning("仅支持 .txt 和 .docx 模板。", "文件类型不支持"); return; }
-        if (!confirmUnsaved("继续")) return;
+        Path parent = selected.getParentFile().toPath().toAbsolutePath().normalize();
         File target = selected;
-        try {
-            Path parent = selected.getParentFile().toPath().toAbsolutePath().normalize();
-            if (!parent.equals(templateStore.templatesDir().toAbsolutePath().normalize())) {
-                target = chooseImportTarget(selected, dir);
-                if (target == null) return;
-                Files.copy(selected.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING);
+        if (!parent.equals(templateStore.templatesDir().toAbsolutePath().normalize())) {
+            target = chooseImportTarget(selected, dir);
+            if (target == null) return;
+        }
+        File finalTarget = target;
+        confirmUnsavedThen("继续", () -> {
+            if (!confirmCancelGeneration("切换模板")) return;
+            if (selected.toPath().toAbsolutePath().normalize()
+                    .equals(finalTarget.toPath().toAbsolutePath().normalize())) {
+                loadTemplateAsync(finalTarget.getName(), null);
+            } else {
+                importTemplateAsync(selected.toPath(), finalTarget.toPath());
             }
-        } catch (IOException e) { showError("无法导入模板文件：\n" + e, "导入失败"); return; }
-        loadTemplate(target.getName());
+        });
+    }
+
+    private void importTemplateAsync(Path source, Path target) {
+        fileTasks.submit("import-template", FileOperationText.IMPORT_TEMPLATE.taskName(),
+                FileTaskManager.LockScope.TEMPLATE, true,
+                progress -> {
+                    copyWithProgress(source, target, progress,
+                            FileOperationText.IMPORT_TEMPLATE.inProgress());
+                    return target.getFileName().toString();
+                }, name -> loadTemplateAsync(name, null), error ->
+                        showError("无法导入模板文件：\n" + error, "导入失败"),
+                () -> setStatus("模板导入已取消。"));
     }
 
     private void newTemplate() {
-        if (!confirmUnsaved("继续")) return;
+        confirmUnsavedThen("继续", this::promptNewTemplateName);
+    }
+
+    private void promptNewTemplateName() {
+        if (!confirmCancelGeneration("新建模板")) return;
         String name = JOptionPane.showInputDialog(this, "请输入新模板文件名（仅支持 .txt）：", "新建模板", JOptionPane.PLAIN_MESSAGE);
         if (name == null) return;
         name = name.trim();
@@ -509,7 +618,7 @@ public final class TemplateToolApp extends JFrame {
         else if (!".txt".equalsIgnoreCase(ext)) { showWarning("界面内新建仅支持 .txt 模板；Word 模板请从外部导入。", "文件类型不支持"); return; }
         String existing = findNameIgnoreCase(templateStore.listTemplateNames(), name);
         if (existing != null) {
-            if (loadTemplate(existing)) setStatus("该模板已存在，已为你打开：" + existing);
+            loadTemplateAsync(existing, () -> setStatus("该模板已存在，已为你打开：" + existing));
             return;
         }
         templateConfigSaveTimer.stop();
@@ -522,11 +631,50 @@ public final class TemplateToolApp extends JFrame {
         variableStates = new LinkedHashMap<>();
         setDocxMode(false); setTemplateText(""); rebuildVariableStates(TemplateParser.parse(""));
         checkedTemplateVariables.put(name, Set.of());
-        invalidateResult(null); updateDirtyIndicator(); rememberTemplate(name);
+        invalidateResult(null); templateRevision++; inputRevision++;
+        updateDirtyIndicator(); rememberTemplate(name);
         setStatus("新模板 " + name + " 尚未保存。");
     }
 
-    private void saveTemplate() { saveTemplateInternal(true); }
+    private void saveTemplate() { saveTemplateAsync(true, null); }
+
+    private record SaveTemplateRequest(String name, String text,
+                                       TemplateParser.ParsedTemplate parsed) { }
+
+    private void saveTemplateAsync(boolean showSuccess, Runnable afterSuccess) {
+        if (docxMode) {
+            showWarning("Word 模板为只读预览，请使用 Word 编辑后重新打开或重新加载。", "提示");
+            return;
+        }
+        syncTemplate();
+        if (currentTemplateName.isEmpty() || !isTxtName(currentTemplateName)) {
+            showWarning("文本模板只能保存为 .txt 文件。", "文件类型不支持");
+            return;
+        }
+        SaveTemplateRequest request = new SaveTemplateRequest(currentTemplateName,
+                currentTemplate, TemplateParser.parse(currentTemplate));
+        fileTasks.submit(TASK_SAVE_TEMPLATE, FileOperationText.SAVE_TEMPLATE.taskName(),
+                FileTaskManager.LockScope.TEMPLATE, false,
+                progress -> {
+                    progress.update(FileOperationText.SAVE_TEMPLATE.inProgress(), 20, 100);
+                    templateStore.writeTemplate(request.name(), request.text());
+                    progress.update(FileOperationText.SAVE_TEMPLATE.inProgress(), 100, 100);
+                    return request;
+                }, saved -> {
+                    if (saved.name().equals(currentTemplateName)) {
+                        lastDiskContent = saved.text();
+                        currentTemplateSaved = templateText.getText().equals(saved.text());
+                        rememberCheckedVariables(saved.name(), saved.parsed());
+                        updateDirtyIndicator();
+                        rememberTemplate(saved.name());
+                    }
+                    setStatus("模板已保存。", "模板已保存到：" + templateStore.templateFile(saved.name()));
+                    if (showSuccess) JOptionPane.showMessageDialog(this,
+                            "模板已保存。", "已保存", JOptionPane.INFORMATION_MESSAGE);
+                    if (afterSuccess != null) afterSuccess.run();
+                }, error -> showError("无法写入模板文件：\n" + error, "保存失败"),
+                () -> setStatus("模板保存已取消。"));
+    }
     private boolean saveTemplateInternal(boolean showSuccess) {
         if (docxMode) { showWarning("Word 模板为只读预览，请使用 Word 编辑后重新打开或重新加载。", "提示"); return false; }
         syncTemplate();
@@ -542,12 +690,16 @@ public final class TemplateToolApp extends JFrame {
         return true;
     }
 
-    private boolean confirmUnsaved(String action) {
-        if (!hasUnsavedTemplateChanges()) return true;
+    private void confirmUnsavedThen(String action, Runnable continuation) {
+        if (!hasUnsavedTemplateChanges()) {
+            continuation.run();
+            return;
+        }
         Object[] options = {"保存并" + action, "不保存并" + action, "取消"};
         int choice = JOptionPane.showOptionDialog(this, "当前模板有未保存的修改。", "未保存的修改",
                 JOptionPane.DEFAULT_OPTION, JOptionPane.WARNING_MESSAGE, null, options, options[0]);
-        return choice == 0 ? saveTemplateInternal(false) : choice == 1;
+        if (choice == 0) saveTemplateAsync(false, continuation);
+        else if (choice == 1) continuation.run();
     }
 
     private boolean hasUnsavedTemplateChanges() {
@@ -555,6 +707,20 @@ public final class TemplateToolApp extends JFrame {
     }
 
     private void closeApplication() {
+        if (fileTasks.hasActiveTasks()) {
+            if (fileTasks.hasNonCancellableTasks()) {
+                showWarning("当前文件任务正在完成不可中断的写入，请等待进度条完成后再退出。",
+                        "文件任务正在完成");
+                return;
+            }
+            int taskChoice = JOptionPane.showConfirmDialog(this,
+                    "当前仍有文件任务正在执行。\n\n是否取消这些任务并继续退出？",
+                    "文件任务尚未完成", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
+            if (taskChoice != JOptionPane.YES_OPTION) return;
+            fileTasks.cancelAll();
+            setStatus("正在取消文件任务；任务结束后请再次关闭程序。");
+            return;
+        }
         templateSyncTimer.stop();
         syncTemplate();
         templateConfigSaveTimer.stop();
@@ -656,6 +822,7 @@ public final class TemplateToolApp extends JFrame {
         appConfig.setMainDividerLocation(mainSplit.getDividerLocation());
         appConfig.setPreviewResultDividerLocation(previewResultSplit.getDividerLocation());
         saveAppConfig(true);
+        deleteQuietly(currentDocxResult);
         sessionVariableStates.clear();
         dispose(); System.exit(0);
     }
@@ -707,7 +874,13 @@ public final class TemplateToolApp extends JFrame {
     }
 
     private void generate() {
-        invalidateResult(null);
+        if (fileTasks.hasTask(TASK_GENERATE)) {
+            int choice = JOptionPane.showConfirmDialog(this,
+                    "已有结果正在生成。是否取消当前任务，并使用现在的内容重新生成？",
+                    "重新生成", JOptionPane.YES_NO_OPTION, JOptionPane.QUESTION_MESSAGE);
+            if (choice != JOptionPane.YES_OPTION) return;
+            fileTasks.cancelKind(TASK_GENERATE);
+        }
         if (syncTemplate()) { setStatus("输入项已更新，请填写后再次生成。"); return; }
         refreshAllValidation();
         Map<String, String> values = validatedReplacementValues();
@@ -716,12 +889,117 @@ public final class TemplateToolApp extends JFrame {
         if (date == null) { refreshDateValidation(); showWarning("基准日期格式不正确，请输入有效日期，例如 2026-09-01。", "日期格式错误"); return; }
         TemplateParser.ParsedTemplate parsed = TemplateParser.parse(currentTemplate);
         Map<String, String> auto = TemplateConstants.autoValues(date);
-        if (docxMode) { generateDocx(parsed, values, auto, date); return; }
-        TemplateRenderer.RenderResult result = TemplateRenderer.renderUnified(
-                currentTemplate, values, auto, numericVariableNames(), variablePanel.decimalPlaces());
-        if (result.hasError()) { showWarning(result.error(), "表达式计算失败"); setStatus("表达式计算失败，未生成结果。"); return; }
-        resultPanel.setText(result.result()); markResultValid();
-        setStatus(buildSuccessMessage(parsed, date)); saveCurrentTemplateConfig(false);
+        long sequence = ++generationSequence;
+        activeGenerationId = sequence;
+        GenerationRequest request = new GenerationRequest(sequence, docxMode,
+                currentTemplateName, currentTemplate, Map.copyOf(values), Map.copyOf(auto),
+                Set.copyOf(numericVariableNames()), variablePanel.decimalPlaces(), parsed, date,
+                templateRevision, inputRevision);
+        Path[] temporary = new Path[1];
+        fileTasks.submit(TASK_GENERATE, FileOperationText.GENERATE_RESULT.taskName(),
+                FileTaskManager.LockScope.NONE, true,
+                progress -> generateInBackground(request, progress, temporary),
+                this::finishGeneration,
+                error -> {
+                    deleteQuietly(temporary[0]);
+                    if (Objects.equals(activeGenerationId, request.sequence())) activeGenerationId = null;
+                    showError("无法生成结果：\n" + error, "生成失败");
+                    setStatus("结果生成失败。");
+                }, () -> {
+                    deleteQuietly(temporary[0]);
+                    if (Objects.equals(activeGenerationId, request.sequence())) activeGenerationId = null;
+                    setStatus("结果生成已取消。以前的有效结果未被替换。");
+                });
+    }
+
+    private record GenerationRequest(long sequence, boolean word, String templateName,
+                                     String templateText, Map<String, String> values,
+                                     Map<String, String> autoValues,
+                                     Set<String> numericVariables, int decimalPlaces,
+                                     TemplateParser.ParsedTemplate parsed, LocalDate date,
+                                     long templateRevision, long inputRevision) { }
+
+    private record GeneratedResult(GenerationRequest request,
+                                   TemplateRenderer.RenderResult renderResult,
+                                   Path docxFile) { }
+
+    private GeneratedResult generateInBackground(GenerationRequest request,
+                                                  FileTaskManager.ProgressReporter progress,
+                                                  Path[] temporary) throws IOException {
+        progress.update(FileOperationText.GENERATE_RESULT.inProgress(), 5, 100);
+        progress.checkpoint();
+        if (!request.word()) {
+            TemplateRenderer.RenderResult result = TemplateRenderer.renderUnified(
+                    request.templateText(), request.values(), request.autoValues(),
+                    request.numericVariables(), request.decimalPlaces());
+            progress.update(FileOperationText.GENERATE_RESULT.inProgress(), 100, 100);
+            return new GeneratedResult(request, result, null);
+        }
+        Path temp = Files.createTempFile("tt_result", ".docx");
+        temp.toFile().deleteOnExit();
+        temporary[0] = temp;
+        try {
+            TemplateRenderer.RenderResult result = DocxProcessor.renderUnified(
+                    templateStore.templateFile(request.templateName()), temp,
+                    request.values(), request.autoValues(), request.numericVariables(),
+                    request.decimalPlaces(),
+                    (phase, completed, total) -> progress.update(phase, completed, total));
+            progress.checkpoint();
+            return new GeneratedResult(request, result, temp);
+        } catch (IOException | RuntimeException e) {
+            deleteQuietly(temp);
+            throw e;
+        }
+    }
+
+    private void finishGeneration(GeneratedResult generated) {
+        GenerationRequest request = generated.request();
+        if (Objects.equals(activeGenerationId, request.sequence())) activeGenerationId = null;
+        if (generated.renderResult().hasError()) {
+            deleteQuietly(generated.docxFile());
+            showWarning(generated.renderResult().error(), "表达式计算失败");
+            setStatus("表达式计算失败，未生成结果。以前的有效结果未被替换。");
+            return;
+        }
+        boolean stale = request.templateRevision() != templateRevision
+                || request.inputRevision() != inputRevision
+                || !request.templateName().equals(currentTemplateName);
+        if (stale) {
+            handleStaleGeneration(generated);
+            return;
+        }
+        acceptGeneratedResult(generated, false);
+    }
+
+    private void handleStaleGeneration(GeneratedResult generated) {
+        Object[] options = {"按最新内容重新生成", "保留本次结果", "丢弃本次结果"};
+        int choice = JOptionPane.showOptionDialog(this,
+                "文件已经生成，但生成期间模板、变量、日期或小数位数发生了变化。\n\n"
+                        + "本次文件使用的是生成开始时的数据。",
+                "生成内容已经变化", JOptionPane.DEFAULT_OPTION, JOptionPane.WARNING_MESSAGE,
+                null, options, options[0]);
+        if (choice == 0) {
+            deleteQuietly(generated.docxFile());
+            SwingUtilities.invokeLater(this::generate);
+        } else if (choice == 1) {
+            acceptGeneratedResult(generated, true);
+        } else {
+            deleteQuietly(generated.docxFile());
+            setStatus("已丢弃基于旧输入生成的结果。");
+        }
+    }
+
+    private void acceptGeneratedResult(GeneratedResult generated, boolean stale) {
+        Path oldDocx = currentDocxResult;
+        currentDocxResult = generated.docxFile();
+        currentResultDocx = generated.request().word();
+        if (oldDocx != null && !oldDocx.equals(currentDocxResult)) retireTemporaryResult(oldDocx);
+        resultPanel.setText(generated.renderResult().result());
+        markResultValid();
+        setStatus(stale
+                ? "已保留本次结果；它基于生成开始时的数据，与当前输入不一致。"
+                : buildSuccessMessage(generated.request().parsed(), generated.request().date()));
+        saveCurrentTemplateConfig(false);
     }
 
     private Map<String, String> validatedReplacementValues() {
@@ -749,30 +1027,16 @@ public final class TemplateToolApp extends JFrame {
         return names;
     }
 
-    private void generateDocx(TemplateParser.ParsedTemplate parsed, Map<String, String> values,
-                              Map<String, String> auto, LocalDate date) {
-        Path temp = null;
-        try {
-            temp = Files.createTempFile("tt_result", ".docx"); temp.toFile().deleteOnExit();
-            TemplateRenderer.RenderResult result = DocxProcessor.renderUnified(
-                    templateStore.templateFile(currentTemplateName), temp, values, auto,
-                    numericVariableNames(), variablePanel.decimalPlaces());
-            if (result.hasError()) { Files.deleteIfExists(temp); showWarning(result.error(), "表达式计算失败"); return; }
-            currentDocxResult = temp; resultPanel.setText(result.result()); markResultValid();
-            setStatus(buildSuccessMessage(parsed, date) + " 可导出 Word 文档。"); saveCurrentTemplateConfig(false);
-        } catch (IOException e) {
-            if (temp != null) try { Files.deleteIfExists(temp); } catch (IOException ignored) { }
-            showError("无法生成 Word 结果：\n" + e, "生成失败"); setStatus("Word 生成失败。");
-        }
-    }
-
     private static String buildSuccessMessage(TemplateParser.ParsedTemplate parsed, LocalDate date) {
         return "生成成功：" + parsed.variables().size() + " 个变量，"
                 + parsed.expressionCount() + " 个表达式。";
     }
 
     private void invalidateResult(String reason) {
-        resultValid = false; currentDocxResult = null;
+        resultValid = false;
+        retireTemporaryResult(currentDocxResult);
+        currentDocxResult = null;
+        currentResultDocx = false;
         if (resultPanel != null) resultPanel.setText("");
         if (copyBtn != null) { copyBtn.setEnabled(false); saveResultBtn.setEnabled(false); }
         if (reason != null && !reason.isEmpty()) setStatus(reason);
@@ -795,16 +1059,25 @@ public final class TemplateToolApp extends JFrame {
         Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new StringSelection(resultPanel.getText()), null);
         setStatus("结果已复制到剪贴板。");
     }
-    private void saveResult() { if (requireResult()) { if (docxMode) saveDocxResult(); else saveTextResult(); } }
+    private void saveResult() { if (requireResult()) { if (currentResultDocx) saveDocxResult(); else saveTextResult(); } }
 
     private void saveTextResult() {
         JFileChooser chooser = resultChooser("保存结果", TemplateConstants.RESULT_FILENAME, "文本文件 (*.txt)", "txt");
         while (chooser.showSaveDialog(this) == JFileChooser.APPROVE_OPTION) {
             File file = withRequiredExtension(chooser.getSelectedFile(), ".txt");
             if (file == null || !confirmFileOverwrite(file)) continue;
-            try { TextFileWriter.writeText(file.toPath(), resultPanel.getText()); }
-            catch (IOException e) { showError("无法写入文件：\n" + e, "保存失败"); return; }
-            setStatus("结果已保存。", "结果已保存到：" + file.getAbsolutePath()); return;
+            String text = resultPanel.getText();
+            fileTasks.submit(TASK_EXPORT, FileOperationText.SAVE_RESULT.taskName(),
+                    FileTaskManager.LockScope.NONE, false,
+                    progress -> {
+                        progress.update(FileOperationText.SAVE_RESULT.inProgress(), 20, 100);
+                        TextFileWriter.writeText(file.toPath(), text);
+                        progress.update(FileOperationText.SAVE_RESULT.inProgress(), 100, 100);
+                        return file;
+                    }, saved -> setStatus("结果已保存。", "结果已保存到：" + saved.getAbsolutePath()),
+                    error -> showError("无法写入文件：\n" + error, "保存失败"),
+                    () -> setStatus("保存结果已取消。"));
+            return;
         }
     }
     private void saveDocxResult() {
@@ -813,9 +1086,17 @@ public final class TemplateToolApp extends JFrame {
         while (chooser.showSaveDialog(this) == JFileChooser.APPROVE_OPTION) {
             File file = withRequiredExtension(chooser.getSelectedFile(), ".docx");
             if (file == null || !confirmFileOverwrite(file)) continue;
-            try { Files.copy(currentDocxResult, file.toPath(), StandardCopyOption.REPLACE_EXISTING); }
-            catch (IOException e) { showError("无法写入文件：\n" + e, "保存失败"); return; }
-            setStatus("结果已保存。", "结果已保存到：" + file.getAbsolutePath()); return;
+            Path source = currentDocxResult;
+            fileTasks.submit(TASK_EXPORT, FileOperationText.SAVE_RESULT.taskName(),
+                    FileTaskManager.LockScope.NONE, true,
+                    progress -> {
+                        copyWithProgress(source, file.toPath(), progress,
+                                FileOperationText.SAVE_RESULT.inProgress());
+                        return file;
+                    }, saved -> setStatus("结果已保存。", "结果已保存到：" + saved.getAbsolutePath()),
+                    error -> showError("无法写入文件：\n" + error, "保存失败"),
+                    () -> setStatus("保存结果已取消。"));
+            return;
         }
     }
 
@@ -877,10 +1158,9 @@ public final class TemplateToolApp extends JFrame {
                     "刷新模板", JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
             if (choice != JOptionPane.OK_OPTION) return;
         }
+        if (!confirmCancelGeneration("刷新模板")) return;
         String name = currentTemplateName;
-        if (loadTemplate(name)) {
-            setStatus("已从磁盘刷新模板：" + name);
-        }
+        loadTemplateAsync(name, () -> setStatus("已从磁盘刷新模板：" + name));
     }
 
     private static boolean isValidTemplateName(String name) {
@@ -894,6 +1174,63 @@ public final class TemplateToolApp extends JFrame {
     private static String findNameIgnoreCase(List<String> names, String wanted) {
         if (wanted != null) for (String name : names) if (name.equalsIgnoreCase(wanted)) return name;
         return null;
+    }
+
+    private boolean confirmCancelGeneration(String action) {
+        if (!fileTasks.hasTask(TASK_GENERATE)) return true;
+        int choice = JOptionPane.showConfirmDialog(this,
+                "当前正在生成结果。\n\n继续“" + action + "”需要取消正在进行的生成任务。是否继续？",
+                "取消当前生成", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
+        if (choice != JOptionPane.YES_OPTION) return false;
+        fileTasks.cancelKind(TASK_GENERATE);
+        return true;
+    }
+
+    private static void copyWithProgress(Path source, Path target,
+                                         FileTaskManager.ProgressReporter progress,
+                                         String phase) throws IOException {
+        Path absoluteTarget = target.toAbsolutePath().normalize();
+        Path parent = absoluteTarget.getParent();
+        if (parent == null) throw new IOException("目标文件没有有效的父文件夹");
+        Files.createDirectories(parent);
+        Path temp = Files.createTempFile(parent, absoluteTarget.getFileName().toString(), ".copy.tmp");
+        boolean committed = false;
+        long total = Math.max(1, Files.size(source)), completed = 0;
+        byte[] buffer = new byte[64 * 1024];
+        try {
+            progress.update(phase, 0, total);
+            try (InputStream in = Files.newInputStream(source);
+                 OutputStream out = Files.newOutputStream(temp)) {
+                int read;
+                while ((read = in.read(buffer)) >= 0) {
+                    progress.checkpoint();
+                    if (read == 0) continue;
+                    out.write(buffer, 0, read);
+                    completed += read;
+                    progress.update(phase, completed, total);
+                }
+            }
+            progress.checkpoint();
+            try {
+                Files.move(temp, absoluteTarget, StandardCopyOption.ATOMIC_MOVE,
+                        StandardCopyOption.REPLACE_EXISTING);
+            } catch (AtomicMoveNotSupportedException e) {
+                Files.move(temp, absoluteTarget, StandardCopyOption.REPLACE_EXISTING);
+            }
+            committed = true;
+            progress.update(phase, total, total);
+        } finally {
+            if (!committed) Files.deleteIfExists(temp);
+        }
+    }
+
+    private static void deleteQuietly(Path path) {
+        if (path == null) return;
+        try { Files.deleteIfExists(path); } catch (IOException ignored) { }
+    }
+
+    private static void retireTemporaryResult(Path path) {
+        if (path != null) path.toFile().deleteOnExit();
     }
     private void showHelp() {
         if (helpDialog == null) {

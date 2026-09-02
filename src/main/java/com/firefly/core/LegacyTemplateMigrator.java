@@ -3,6 +3,7 @@ package com.firefly.core;
 import com.firefly.TemplateConstants;
 
 import java.io.IOException;
+import java.io.InterruptedIOException;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -49,28 +50,41 @@ public final class LegacyTemplateMigrator {
     /** 先创建唯一备份，再通过同目录临时文件原子替换原模板。 */
     public static MigrationResult migrate(Path template, boolean docx, String extractedText)
             throws IOException {
+        return migrate(template, docx, extractedText, OperationProgress.NONE);
+    }
+
+    public static MigrationResult migrate(Path template, boolean docx, String extractedText,
+                                          OperationProgress progress) throws IOException {
         Scan scan = scan(extractedText);
         if (!scan.found()) return new MigrationResult(scan, null);
 
         Path backup = uniqueBackup(template);
+        progress.update("正在备份原模板", 0, 100);
         Files.copy(template, backup);
+        checkCancelled();
+        progress.update("正在转换旧语法", 25, 100);
         Path temp = Files.createTempFile(template.getParent(), template.getFileName().toString(), ".migration.tmp");
         boolean committed = false;
         try {
             if (docx) {
-                DocxProcessor.migrateLegacyPlaceholders(template, temp);
+                DocxProcessor.migrateLegacyPlaceholders(template, temp,
+                        (phase, completed, total) -> progress.update(phase,
+                                25 + (total <= 0 ? 0 : completed * 55 / total), 100));
             } else {
                 TextFileWriter.writeText(temp, migrateText(extractedText));
+                progress.update(FileOperationText.CONVERT_TEMPLATE.inProgress(), 80, 100);
             }
             String migratedText = docx ? DocxProcessor.extractText(temp) : TextFileWriter.readText(temp);
             if (scan(migratedText).found()) {
                 throw new IOException("转换后的模板仍包含无法迁移的旧占位符");
             }
+            checkCancelled();
             try {
                 Files.move(temp, template, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
             } catch (AtomicMoveNotSupportedException e) {
                 Files.move(temp, template, StandardCopyOption.REPLACE_EXISTING);
             }
+            progress.update("正在完成模板转换", 100, 100);
             committed = true;
             return new MigrationResult(scan, backup);
         } finally {
@@ -84,6 +98,12 @@ public final class LegacyTemplateMigrator {
         for (int number = 2; ; number++) {
             Path candidate = template.resolveSibling(template.getFileName() + ".bak." + number);
             if (!Files.exists(candidate)) return candidate;
+        }
+    }
+
+    private static void checkCancelled() throws InterruptedIOException {
+        if (Thread.currentThread().isInterrupted()) {
+            throw new InterruptedIOException("操作已取消");
         }
     }
 }
