@@ -76,7 +76,7 @@ Content beginning with `=` is evaluated as an arithmetic expression:
 {{=quantity*unitPrice}}
 ```
 
-Expressions support `+`, `-`, `*`, `/`, `**` (power), and parentheses. Results use the same 0–10 decimal-place setting as ordinary numeric replacements (two by default) and are rounded half up. Referenced variables are locked to Numeric, and blank values are treated as `0`.
+Expressions support `+`, `-`, `*`, `/`, `**` (power), postfix `%` (percentage), and parentheses. `5%` equals `0.05`, for example `{{=amount*5%}}`. Results use the same 0–10 decimal-place setting as ordinary numeric replacements (two by default) and are rounded half up. Referenced variables are locked to Numeric, and blank values are treated as `0`. More common examples are available on the Calculation Guide tab in the help window.
 
 Variables can be referenced in two ways:
 

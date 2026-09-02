@@ -38,7 +38,9 @@ public final class ExpressionEvaluator {
         return result;
     }
 
-    private enum TokenType { NUMBER, VARIABLE, PLUS, MINUS, STAR, SLASH, POWER, LPAREN, RPAREN, EOF }
+    private enum TokenType {
+        NUMBER, VARIABLE, PLUS, MINUS, STAR, SLASH, POWER, PERCENT, LPAREN, RPAREN, EOF
+    }
     private record Token(TokenType type, String text, double number) { }
 
     private static final class Lexer {
@@ -55,6 +57,7 @@ public final class ExpressionEvaluator {
                 case '+' -> { pos++; return simple(TokenType.PLUS, "+"); }
                 case '-' -> { pos++; return simple(TokenType.MINUS, "-"); }
                 case '/' -> { pos++; return simple(TokenType.SLASH, "/"); }
+                case '%' -> { pos++; return simple(TokenType.PERCENT, "%"); }
                 case '(' -> { pos++; return simple(TokenType.LPAREN, "("); }
                 case ')' -> { pos++; return simple(TokenType.RPAREN, ")"); }
                 case '*' -> {
@@ -170,9 +173,19 @@ public final class ExpressionEvaluator {
         }
 
         private double power() throws EvalException {
-            double base = atom();
+            double base = percentage();
             if (token.type == TokenType.POWER) { advance(); return Math.pow(base, power()); }
             return base;
+        }
+
+        /** 后缀百分号：5% 等于 5 / 100；连续百分号逐次除以 100。 */
+        private double percentage() throws EvalException {
+            double value = atom();
+            while (token.type == TokenType.PERCENT) {
+                advance();
+                value /= 100.0;
+            }
+            return value;
         }
 
         private double atom() throws EvalException {

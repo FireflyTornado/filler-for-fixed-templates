@@ -37,6 +37,7 @@ public final class TemplateHelpDialog extends JDialog {
         setDefaultCloseOperation(HIDE_ON_CLOSE);
         JTabbedPane tabs = new JTabbedPane();
         tabs.addTab("语法说明", textPage(syntaxText()));
+        tabs.addTab("运算说明", textPage(calculationHelpText()));
         tabs.addTab("日期变量", textPage(dateHelpText()));
         JTable current = new JTable(currentModel) {
             @Override public String getToolTipText(java.awt.event.MouseEvent event) {
@@ -155,6 +156,36 @@ public final class TemplateHelpDialog extends JDialog {
                 + "• 表达式引用的变量会锁定为数值。\n"
                 + "• 在变量值输入框按 Tab 可跳到下一变量值。\n"
                 + "• 同名变量只需填写一次。";
+    }
+
+    private static String calculationHelpText() {
+        return "常用表达式写法\n\n"
+                + "表达式写在 {{= 和 }} 之间，例如：{{=数量*单价}}\n\n"
+                + "基本运算\n"
+                + "{{=数量+赠品数量}}       加法\n"
+                + "{{=原价-优惠金额}}       减法\n"
+                + "{{=数量*单价}}           乘法\n"
+                + "{{=总金额/人数}}         除法\n"
+                + "{{=长度**2}}             乘方（长度的平方）\n"
+                + "{{=(原价-优惠金额)*数量}} 使用括号指定先算的部分\n\n"
+                + "百分数\n"
+                + "{{=金额*5%}}             金额的 5%\n"
+                + "{{=原价*(1-折扣率%)}}    输入 20 时表示打八折\n"
+                + "{{=(数量+赠品数量)*10%}} 括号结果的 10%\n"
+                + "百分号是后缀运算符，5% 等于 0.05；为避免歧义，复杂写法建议加括号。\n\n"
+                + "如果从 Excel 取得的税率值是 0.2，应直接写 税率；如果填写的是 20，才写 税率%。\n\n"
+                + "变量名称\n"
+                + "{{=数量*单价}}           普通名称可直接引用\n"
+                + "{{=[1]*[2]}}             纯数字变量名必须放在方括号内\n"
+                + "{{=[销售 数量]*[含税单价]}} 含空格或特殊字符的名称使用方括号\n\n"
+                + "当前计算规则\n"
+                + "• 先算括号内的内容，再依次处理百分号、乘方、乘除和加减。\n"
+                + "• 同一优先级的加减、乘除按从左到右计算。\n"
+                + "• 乘方使用 **，例如 2**3 的结果是 8。\n"
+                + "• 百分号直接作用于它前面的数值、变量或括号结果。\n"
+                + "• 表达式引用的变量固定为数值类型，留空按 0 处理。\n"
+                + "• 除数为 0、变量内容不是有效数字或表达式语法错误时，不会生成结果。\n"
+                + "• 最终结果按照主界面设置的小数位数统一四舍五入并补足末尾零。";
     }
 
     public static String dateHelpText() {
