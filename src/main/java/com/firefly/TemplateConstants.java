@@ -29,9 +29,11 @@ public final class TemplateConstants {
             Set.of("今日年", "今日年月", "今日年月日",
                     "昨日年", "昨日年月", "昨日年月日",
                     "明日年", "明日年月", "明日年月日",
+                    "今日", "昨日", "明日",
                     "本月年", "本月年月",
                     "上月年", "上月年月",
                     "下月年", "下月年月",
+                    "本月", "上月", "下月",
                     "本年", "上年", "下年",
                     "本月月首", "本月月末");
 
@@ -60,18 +62,32 @@ public final class TemplateConstants {
         map.put("明日年", year(tomorrow));
         map.put("明日年月", yearMonth(tomorrow));
         map.put("明日年月日", yearMonthDay(tomorrow));
+        map.put("今日", day(selectedDay));
+        map.put("昨日", day(yesterday));
+        map.put("明日", day(tomorrow));
         map.put("本月年", year(selectedDay));
         map.put("本月年月", yearMonth(selectedDay));
         map.put("上月年", year(previousMonth));
         map.put("上月年月", yearMonth(previousMonth));
         map.put("下月年", year(nextMonth));
         map.put("下月年月", yearMonth(nextMonth));
+        map.put("本月", month(selectedDay));
+        map.put("上月", month(previousMonth));
+        map.put("下月", month(nextMonth));
         map.put("本年", year(selectedDay));
         map.put("上年", year(selectedDay.minusYears(1)));
         map.put("下年", year(selectedDay.plusYears(1)));
-        map.put("本月月首", yearMonthDay(firstDayOfMonth));
-        map.put("本月月末", yearMonthDay(lastDayOfMonth));
+        map.put("本月月首", monthDay(firstDayOfMonth));
+        map.put("本月月末", monthDay(lastDayOfMonth));
         return map;
+    }
+
+    private static String day(LocalDate date) {
+        return date.getDayOfMonth() + "日";
+    }
+
+    private static String month(LocalDate date) {
+        return date.getMonthValue() + "月";
     }
 
     private static String year(LocalDate date) {
@@ -84,6 +100,10 @@ public final class TemplateConstants {
 
     private static String yearMonthDay(LocalDate date) {
         return yearMonth(date) + date.getDayOfMonth() + "日";
+    }
+
+    private static String monthDay(LocalDate date) {
+        return month(date) + day(date);
     }
 
     /**

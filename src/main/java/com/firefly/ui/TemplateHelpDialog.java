@@ -183,11 +183,15 @@ public final class TemplateHelpDialog extends JDialog {
             case 2 -> "本年 / 上年 / 下年"; default -> "月首 / 月末"; };
     }
     private static String dateMeaning(String name) {
-        if (name.endsWith("年月日")) return "对应日期（年-月-日）";
-        if (name.endsWith("年月")) return "对应月份（年-月）";
-        if (name.endsWith("月首")) return "基准月份第一天";
-        if (name.endsWith("月末")) return "基准月份最后一天";
-        if (name.endsWith("年") || name.equals("本年") || name.equals("上年") || name.equals("下年")) return "对应年份";
+        if (name.endsWith("年月日")) return "对应日期（X年X月X日）";
+        if (name.endsWith("年月")) return "对应月份（X年X月）";
+        if (name.endsWith("月首")) return "基准月份第一天（X月X日）";
+        if (name.endsWith("月末")) return "基准月份最后一天（X月X日）";
+        if (name.equals("今日") || name.equals("昨日") || name.equals("明日"))
+            return "对应日期的日（X日）";
+        if (name.equals("本月") || name.equals("上月") || name.equals("下月"))
+            return "对应月份（X月）";
+        if (name.endsWith("年") || name.equals("本年") || name.equals("上年") || name.equals("下年")) return "对应年份（X年）";
         return "由基准日期自动计算";
     }
 

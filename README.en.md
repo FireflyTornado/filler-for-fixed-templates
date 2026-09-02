@@ -14,7 +14,7 @@ A lightweight Java Swing desktop tool with a unified variable system for filling
 - **Adjustable UI text** → Follow System, Comfortable, Large, and Extra Large presets build on the Windows/JDK DPI-aware system fonts without applying DPI twice
 - **Unified decimal places** → use `−` / `+` in the variable form to keep 0–10 decimal places for the current template; numeric replacements and expression results share the same setting, defaulting to two places
 - **Calendar base date** → all built-in date variables use the calendar selection as their base; every launch starts with the current system date, and you can type `yyyy-MM-dd` or use the popup calendar to change it
-- **Complete date derivation** → supports yesterday/today/tomorrow, previous/current/next month, previous/current/next year, and the first/last day of the current month, with automatic month, year, and leap-year handling
+- **Complete date derivation** → supports day-only, month-only, year-month, full-date, and year output for relative days, months, and years, plus the first/last day of the base month, with automatic month, year, and leap-year handling
 - **Per-template configuration** → application state is stored in `config.json`, while each template keeps its own values, selected types, and decimal places in `Config/<full-template-name>.json`
 - **Safe legacy migration** → existing `last_values.json` data is migrated once in read-only mode and the legacy file is never modified or deleted; new configuration writes use temporary files and atomic replacement where supported
 - **Generated-result protection** → changing the template, variable value, variable type, or base date immediately invalidates the old result and disables copying or saving it
@@ -104,11 +104,13 @@ All date variables are derived from the base date selected in the UI:
 | `{{今日年}}` `{{今日年月}}` `{{今日年月日}}` | Base date |
 | `{{昨日年}}` `{{昨日年月}}` `{{昨日年月日}}` | Day before the base date |
 | `{{明日年}}` `{{明日年月}}` `{{明日年月日}}` | Day after the base date |
+| `{{今日}}` `{{昨日}}` `{{明日}}` | Day only, such as `1日` or `31日` |
 | `{{本月年}}` `{{本月年月}}` | Base month |
 | `{{上月年}}` `{{上月年月}}` | Previous month |
 | `{{下月年}}` `{{下月年月}}` | Next month |
+| `{{本月}}` `{{上月}}` `{{下月}}` | Month only, such as `1月` or `12月` |
 | `{{上年}}` `{{本年}}` `{{下年}}` | Relative years |
-| `{{本月月首}}` `{{本月月末}}` | First or last day of the base month |
+| `{{本月月首}}` `{{本月月末}}` | First or last day of the base month, month-day only, such as `2月1日` or `2月29日` |
 
 The old `[[variable]]` form is deprecated. The app offers a one-time conversion when such a template is loaded; unconverted placeholders remain unchanged and are not filled.
 
