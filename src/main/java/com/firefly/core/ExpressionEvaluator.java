@@ -2,232 +2,204 @@ package com.firefly.core;
 
 import com.firefly.TemplateConstants;
 
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
-import java.util.regex.Matcher;
+import java.util.Set;
 
-/**
- * 安全的算术表达式求值（支持 + - * / ** 和括号，变量名可含中文）。
- * 规则：
- *   * 先正则提取变量名并替换成用户输入的数字（空值按 0）
- *   * 用自写的递归下降解析器逐字符解析求值，无法识别的部分会报错，不依赖任何动态求值能力
- */
+/** 安全算术表达式求值；[变量名] 用于显式引用纯数字或含特殊字符的变量名。 */
 public final class ExpressionEvaluator {
-
     private static final String BAD_PART_MSG = "包含无法识别的部分。";
 
-    private ExpressionEvaluator() {
-    }
+    private ExpressionEvaluator() { }
 
-    /** 求值失败时抛出；message 已去掉「表达式…」前缀，由渲染层负责拼接。 */
     public static final class EvalException extends Exception {
-        public EvalException(String message) {
-            super(message);
-        }
+        public EvalException(String message) { super(message); }
     }
 
-    /**
-     * 计算占位符里的算术表达式。
-     *
-     * @param expr   表达式原文（如 "数量*单价"）
-     * @param values 变量名 -> 数值字符串（如 "3"、"12.5"）
-     * @return 计算结果
-     */
+    /** 返回表达式依赖的变量；与实际求值共用同一个分词器。 */
+    public static List<String> referencedVariables(String expr) throws EvalException {
+        Lexer lexer = new Lexer(expr);
+        Set<String> names = new LinkedHashSet<>();
+        Token token;
+        do {
+            token = lexer.next();
+            if (token.type == TokenType.VARIABLE) names.add(token.text);
+        } while (token.type != TokenType.EOF);
+        return List.copyOf(names);
+    }
+
     public static double evaluate(String expr, Map<String, String> values) throws EvalException {
-        String substituted = substituteIdentifiers(expr, values);
-        try {
-            Parser parser = new Parser(substituted);
-            double result = parser.parse();
-            if (Double.isNaN(result) || Double.isInfinite(result)) {
-                throw new EvalException("的结果不是有效数字。");
-            }
-            return result;
-        } catch (EvalException e) {
-            throw e;
-        } catch (Exception e) {
-            throw new EvalException("计算失败：" + e.getMessage());
+        Parser parser = new Parser(expr, values == null ? Map.of() : values);
+        double result = parser.parse();
+        if (Double.isNaN(result) || Double.isInfinite(result)) {
+            throw new EvalException("的结果不是有效数字。");
         }
+        return result;
     }
 
-    /** 用变量值替换表达式里的变量名；空值按 0 处理；自动日期变量 / 未定义变量报错。 */
-    private static String substituteIdentifiers(String expr, Map<String, String> values)
-            throws EvalException {
-        StringBuilder sb = new StringBuilder();
-        Matcher m = TemplateConstants.IDENT_RE.matcher(expr);
-        int pos = 0;
-        while (m.find()) {
-            sb.append(expr, pos, m.start());
-            sb.append(lookup(m.group(), values));
-            pos = m.end();
-        }
-        sb.append(expr.substring(pos));
-        return sb.toString();
-    }
+    private enum TokenType { NUMBER, VARIABLE, PLUS, MINUS, STAR, SLASH, POWER, LPAREN, RPAREN, EOF }
+    private record Token(TokenType type, String text, double number) { }
 
-    private static String lookup(String name, Map<String, String> values) throws EvalException {
-        if (TemplateConstants.AUTO_VAR_SET.contains(name)) {
-            throw new EvalException("自动日期变量「" + name + "」不能参与运算");
-        }
-        String v = values.get(name);
-        if (v == null) {
-            throw new EvalException("变量「" + name + "」未定义");
-        }
-        v = v.trim();
-        return v.isEmpty() ? "0" : v;
-    }
-
-    /**
-     * 递归下降解析器：
-     *   expression -> term ((+|-) term)*
-     *   term       -> factor ((*|/) factor)*
-     *   factor     -> (+|-) factor | power
-     *   power      -> atom (** power)?    （右结合）
-     *   atom       -> number | ( expression )
-     */
-    private static final class Parser {
-        private final String s;
+    private static final class Lexer {
+        private final String source;
         private int pos;
 
-        Parser(String s) {
-            this.s = s;
+        Lexer(String source) { this.source = source == null ? "" : source; }
+
+        Token next() throws EvalException {
+            skipWs();
+            if (pos >= source.length()) return new Token(TokenType.EOF, "", 0);
+            char c = source.charAt(pos);
+            switch (c) {
+                case '+' -> { pos++; return simple(TokenType.PLUS, "+"); }
+                case '-' -> { pos++; return simple(TokenType.MINUS, "-"); }
+                case '/' -> { pos++; return simple(TokenType.SLASH, "/"); }
+                case '(' -> { pos++; return simple(TokenType.LPAREN, "("); }
+                case ')' -> { pos++; return simple(TokenType.RPAREN, ")"); }
+                case '*' -> {
+                    pos++;
+                    if (pos < source.length() && source.charAt(pos) == '*') {
+                        pos++;
+                        return simple(TokenType.POWER, "**");
+                    }
+                    return simple(TokenType.STAR, "*");
+                }
+                case '[' -> { return bracketVariable(); }
+                default -> { }
+            }
+            if (Character.isDigit(c) || c == '.') return number();
+            if (isIdentifierStart(c)) return bareVariable();
+            throw new EvalException(BAD_PART_MSG);
+        }
+
+        private Token bracketVariable() throws EvalException {
+            int start = ++pos;
+            while (pos < source.length() && source.charAt(pos) != ']') pos++;
+            if (pos >= source.length()) throw new EvalException("中的变量引用缺少 ]。");
+            String name = source.substring(start, pos++).trim();
+            if (name.isEmpty()) throw new EvalException("中的变量名不能为空。");
+            return new Token(TokenType.VARIABLE, name, 0);
+        }
+
+        private Token bareVariable() {
+            int start = pos++;
+            while (pos < source.length() && isIdentifierPart(source.charAt(pos))) pos++;
+            return new Token(TokenType.VARIABLE, source.substring(start, pos), 0);
+        }
+
+        private Token number() throws EvalException {
+            int start = pos;
+            boolean digit = false, dot = false;
+            while (pos < source.length()) {
+                char c = source.charAt(pos);
+                if (Character.isDigit(c)) { digit = true; pos++; }
+                else if (c == '.' && !dot) { dot = true; pos++; }
+                else break;
+            }
+            if (!digit) throw new EvalException(BAD_PART_MSG);
+            if (pos < source.length() && (source.charAt(pos) == 'e' || source.charAt(pos) == 'E')) {
+                int exponent = pos++;
+                if (pos < source.length() && (source.charAt(pos) == '+' || source.charAt(pos) == '-')) pos++;
+                int exponentDigits = pos;
+                while (pos < source.length() && Character.isDigit(source.charAt(pos))) pos++;
+                if (pos == exponentDigits) pos = exponent;
+            }
+            String text = source.substring(start, pos);
+            try { return new Token(TokenType.NUMBER, text, Double.parseDouble(text)); }
+            catch (NumberFormatException e) { throw new EvalException(BAD_PART_MSG); }
+        }
+
+        private void skipWs() { while (pos < source.length() && Character.isWhitespace(source.charAt(pos))) pos++; }
+        private static Token simple(TokenType type, String text) { return new Token(type, text, 0); }
+        private static boolean isIdentifierStart(char c) {
+            return Character.isLetter(c) || Character.getType(c) == Character.NON_SPACING_MARK;
+        }
+        private static boolean isIdentifierPart(char c) {
+            return isIdentifierStart(c) || Character.isDigit(c) || c == '_';
+        }
+    }
+
+    private static final class Parser {
+        private final Lexer lexer;
+        private final Map<String, String> values;
+        private Token token;
+
+        Parser(String source, Map<String, String> values) throws EvalException {
+            lexer = new Lexer(source);
+            this.values = values;
+            token = lexer.next();
         }
 
         double parse() throws EvalException {
-            double v = parseExpression();
-            skipWs();
-            if (pos < s.length()) {
-                throw new EvalException(BAD_PART_MSG);
-            }
-            return v;
+            double value = expression();
+            if (token.type != TokenType.EOF) throw new EvalException(BAD_PART_MSG);
+            return value;
         }
 
-        private double parseExpression() throws EvalException {
-            double v = parseTerm();
-            while (true) {
-                skipWs();
-                if (pos < s.length() && (s.charAt(pos) == '+' || s.charAt(pos) == '-')) {
-                    char op = s.charAt(pos++);
-                    double rhs = parseTerm();
-                    v = (op == '+') ? v + rhs : v - rhs;
-                } else {
-                    break;
+        private double expression() throws EvalException {
+            double value = term();
+            while (token.type == TokenType.PLUS || token.type == TokenType.MINUS) {
+                TokenType op = token.type; advance();
+                double rhs = term();
+                value = op == TokenType.PLUS ? value + rhs : value - rhs;
+            }
+            return value;
+        }
+
+        private double term() throws EvalException {
+            double value = factor();
+            while (token.type == TokenType.STAR || token.type == TokenType.SLASH) {
+                TokenType op = token.type; advance();
+                double rhs = factor();
+                if (op == TokenType.SLASH && rhs == 0.0) {
+                    throw new EvalException("除数为 0（留空的变量按 0 处理），无法计算。");
                 }
+                value = op == TokenType.STAR ? value * rhs : value / rhs;
             }
-            return v;
+            return value;
         }
 
-        private double parseTerm() throws EvalException {
-            double v = parseFactor();
-            while (true) {
-                skipWs();
-                if (pos < s.length() && (s.charAt(pos) == '*' || s.charAt(pos) == '/')) {
-                    char op = s.charAt(pos++);
-                    double rhs = parseFactor();
-                    if (op == '/') {
-                        if (rhs == 0.0) {
-                            throw new EvalException("除数为 0（留空的变量按 0 处理），无法计算。");
-                        }
-                        v = v / rhs;
-                    } else {
-                        v = v * rhs;
-                    }
-                } else {
-                    break;
-                }
+        private double factor() throws EvalException {
+            if (token.type == TokenType.PLUS || token.type == TokenType.MINUS) {
+                TokenType op = token.type; advance();
+                double value = factor();
+                return op == TokenType.MINUS ? -value : value;
             }
-            return v;
+            return power();
         }
 
-        private double parseFactor() throws EvalException {
-            skipWs();
-            if (pos >= s.length()) {
-                throw new EvalException(BAD_PART_MSG);
-            }
-            char c = s.charAt(pos);
-            if (c == '+' || c == '-') {
-                pos++;
-                double v = parseFactor();
-                return (c == '-') ? -v : v;
-            }
-            return parsePower();
-        }
-
-        private double parsePower() throws EvalException {
-            double base = parseAtom();
-            skipWs();
-            if (pos + 1 < s.length() && s.charAt(pos) == '*' && s.charAt(pos + 1) == '*') {
-                pos += 2;
-                double exponent = parsePower(); // 右结合
-                return Math.pow(base, exponent);
-            }
+        private double power() throws EvalException {
+            double base = atom();
+            if (token.type == TokenType.POWER) { advance(); return Math.pow(base, power()); }
             return base;
         }
 
-        private double parseAtom() throws EvalException {
-            skipWs();
-            if (pos >= s.length()) {
-                throw new EvalException(BAD_PART_MSG);
-            }
-            char c = s.charAt(pos);
-            if (c == '(') {
-                pos++;
-                double v = parseExpression();
-                skipWs();
-                if (pos >= s.length() || s.charAt(pos) != ')') {
-                    throw new EvalException(BAD_PART_MSG);
-                }
-                pos++;
-                return v;
-            }
-            if (Character.isDigit(c) || c == '.') {
-                return parseNumber();
+        private double atom() throws EvalException {
+            if (token.type == TokenType.NUMBER) { double value = token.number; advance(); return value; }
+            if (token.type == TokenType.VARIABLE) { String name = token.text; advance(); return variableValue(name); }
+            if (token.type == TokenType.LPAREN) {
+                advance();
+                double value = expression();
+                if (token.type != TokenType.RPAREN) throw new EvalException(BAD_PART_MSG);
+                advance();
+                return value;
             }
             throw new EvalException(BAD_PART_MSG);
         }
 
-        /** 解析数字：整数 / 小数 / 科学计数法，如 5、3.5、.5、2e3、1.5E-2。 */
-        private double parseNumber() throws EvalException {
-            int start = pos;
-            boolean hasDot = false;
-            while (pos < s.length()) {
-                char ch = s.charAt(pos);
-                if (ch >= '0' && ch <= '9') {
-                    pos++;
-                } else if (ch == '.' && !hasDot) {
-                    hasDot = true;
-                    pos++;
-                } else {
-                    break;
-                }
+        private double variableValue(String name) throws EvalException {
+            if (TemplateConstants.AUTO_VAR_SET.contains(name)) {
+                throw new EvalException("自动日期变量「" + name + "」不能参与运算");
             }
-            if (pos < s.length() && (s.charAt(pos) == 'e' || s.charAt(pos) == 'E')) {
-                int save = pos;
-                pos++;
-                if (pos < s.length() && (s.charAt(pos) == '+' || s.charAt(pos) == '-')) {
-                    pos++;
-                }
-                int digitStart = pos;
-                while (pos < s.length() && Character.isDigit(s.charAt(pos))) {
-                    pos++;
-                }
-                if (pos == digitStart) {
-                    pos = save; // 无效的指数部分，当作数字结束
-                }
-            }
-            String numStr = s.substring(start, pos);
-            if (numStr.isEmpty() || ".".equals(numStr)) {
-                throw new EvalException(BAD_PART_MSG);
-            }
-            try {
-                return Double.parseDouble(numStr);
-            } catch (NumberFormatException e) {
-                throw new EvalException(BAD_PART_MSG);
-            }
+            String value = values.get(name);
+            if (value == null) throw new EvalException("变量「" + name + "」未定义");
+            value = value.trim();
+            if (value.isEmpty()) return 0;
+            try { return Double.parseDouble(value); }
+            catch (NumberFormatException e) { throw new EvalException("变量「" + name + "」不是有效数字。"); }
         }
 
-        private void skipWs() {
-            while (pos < s.length() && Character.isWhitespace(s.charAt(pos))) {
-                pos++;
-            }
-        }
+        private void advance() throws EvalException { token = lexer.next(); }
     }
 }

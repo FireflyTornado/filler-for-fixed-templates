@@ -311,8 +311,7 @@ public final class TemplateToolApp extends JFrame {
                 next.put(spec.name(), new VariableInputState(spec.name(), type,
                         saved == null ? "" : saved.value(),
                         saved == null ? Map.of() : saved.legacySessionValues(),
-                        spec.numericLocked(),
-                        spec.legacySyntax(), spec.braceSyntax()));
+                        spec.numericLocked()));
             }
         }
         sessionVariableStates.putAll(next);
@@ -326,10 +325,45 @@ public final class TemplateToolApp extends JFrame {
     private void loadTemplate(String name) {
         boolean word = DocxProcessor.isDocxName(name);
         String text;
+        String migrationStatus = null;
         try {
             text = word ? DocxProcessor.extractText(templateStore.templateFile(name))
                     : templateStore.readTemplate(name);
         } catch (IOException e) { showError("无法读取模板文件：\n" + e, "读取失败"); return; }
+        LegacyTemplateMigrator.Scan legacy = LegacyTemplateMigrator.scan(text);
+        if (legacy.found()) {
+            Object[] options = {"一键替换", "取消"};
+            String names = String.join("、", legacy.variableNames());
+            String message = "检测到当前模板包含 " + legacy.count() + " 处已弃用的 [[变量]] 写法。\n"
+                    + "新版不再识别这种写法。是否将它们转换为 {{变量}}？\n\n"
+                    + "变量：" + names + "\n\n替换前会自动备份原模板。";
+            int choice = JOptionPane.showOptionDialog(this, message, "发现旧模板语法",
+                    JOptionPane.DEFAULT_OPTION, JOptionPane.WARNING_MESSAGE,
+                    null, options, options[0]);
+            if (choice == 0) {
+                String originalText = text;
+                LegacyTemplateMigrator.MigrationResult migrated;
+                try {
+                    migrated = LegacyTemplateMigrator.migrate(
+                            templateStore.templateFile(name), word, originalText);
+                    text = word ? DocxProcessor.extractText(templateStore.templateFile(name))
+                            : templateStore.readTemplate(name);
+                } catch (IOException e) {
+                    showError("旧模板语法转换失败，原模板未被替换：\n" + e, "转换失败");
+                    return;
+                }
+                try {
+                    preserveMigratedVariableTypes(name, originalText, migrated.scan().variableNames());
+                } catch (IOException e) {
+                    showWarning("模板语法已转换，但无法保存原有的多行文本类型：\n" + e,
+                            "变量类型未保存");
+                }
+                migrationStatus = "已转换 " + migrated.scan().count() + " 处旧写法；备份："
+                        + migrated.backup().getFileName();
+            } else {
+                migrationStatus = "模板仍包含已弃用的 [[变量]] 写法，本次未转换。";
+            }
+        }
         templateConfigSaveTimer.stop();
         if (!currentTemplateName.isEmpty() && !saveCurrentTemplateConfig(true)) return;
         sessionVariableStates.clear();
@@ -344,7 +378,26 @@ public final class TemplateToolApp extends JFrame {
         invalidateResult(null);
         updateDirtyIndicator();
         rememberTemplate(name);
-        setStatus("已加载模板：" + name + (word ? "（Word 模板，只读预览）" : ""));
+        setStatus(migrationStatus != null ? migrationStatus
+                : "已加载模板：" + name + (word ? "（Word 模板，只读预览）" : ""));
+    }
+
+    /** 仅为过去只使用 [[变量]] 且没有保存类型的变量保留多行文本默认值。 */
+    private void preserveMigratedVariableTypes(String templateName, String originalText,
+                                                List<String> migratedNames) throws IOException {
+        Set<String> existingNewVariables = new HashSet<>();
+        for (TemplateParser.VariableSpec spec : TemplateParser.parse(originalText).variables()) {
+            existingNewVariables.add(spec.name());
+        }
+        TemplateConfig config = templateConfigStore.load(templateName);
+        boolean changed = false;
+        for (String name : migratedNames) {
+            if (!existingNewVariables.contains(name) && !config.variables().containsKey(name)) {
+                config.variables().put(name, new TemplateConfig.Entry(VariableType.MULTILINE_TEXT, ""));
+                changed = true;
+            }
+        }
+        if (changed) templateConfigStore.saveConfig(config);
     }
 
     private void setDocxMode(boolean word) {

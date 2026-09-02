@@ -9,24 +9,18 @@ public final class VariableInputState {
     private VariableType type;
     private final EnumMap<VariableType, String> sessionValues = new EnumMap<>(VariableType.class);
     private final boolean numericLocked;
-    private final boolean legacyMultilineSyntax;
-    private final boolean braceSyntax;
     private boolean numericAttentionRequired;
 
     public VariableInputState(String name, VariableType type, String value,
-                              boolean numericLocked, boolean legacyMultilineSyntax,
-                              boolean braceSyntax) {
-        this(name, type, value, Map.of(), numericLocked, legacyMultilineSyntax, braceSyntax);
+                              boolean numericLocked) {
+        this(name, type, value, Map.of(), numericLocked);
     }
 
     public VariableInputState(String name, VariableType type, String value,
                               Map<VariableType, String> savedDrafts,
-                              boolean numericLocked, boolean legacyMultilineSyntax,
-                              boolean braceSyntax) {
+                              boolean numericLocked) {
         this.name = name;
         this.numericLocked = numericLocked;
-        this.legacyMultilineSyntax = legacyMultilineSyntax;
-        this.braceSyntax = braceSyntax;
         if (savedDrafts != null) savedDrafts.forEach((key, draft) -> {
             if (key != null) sessionValues.put(key, safe(draft));
         });
@@ -48,8 +42,6 @@ public final class VariableInputState {
     public VariableType type() { return type; }
     public String value() { return sessionValues.getOrDefault(type, ""); }
     public boolean numericLocked() { return numericLocked; }
-    public boolean legacyMultilineSyntax() { return legacyMultilineSyntax; }
-    public boolean braceSyntax() { return braceSyntax; }
 
     public boolean hasDraft(VariableType draftType) { return sessionValues.containsKey(draftType); }
     public String draft(VariableType draftType) { return sessionValues.getOrDefault(draftType, ""); }
@@ -80,8 +72,7 @@ public final class VariableInputState {
     public void setDraft(VariableType draftType, String value) { sessionValues.put(draftType, safe(value)); }
 
     public VariableInputState copyFor(TemplateParser.VariableSpec spec) {
-        return new VariableInputState(spec.name(), type, value(), sessionValues, spec.numericLocked(),
-                spec.legacySyntax(), spec.braceSyntax());
+        return new VariableInputState(spec.name(), type, value(), sessionValues, spec.numericLocked());
     }
 
     private static String safe(String value) { return value == null ? "" : value; }

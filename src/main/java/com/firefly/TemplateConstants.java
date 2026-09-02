@@ -37,16 +37,9 @@ public final class TemplateConstants {
 
     /** 匹配 {{...}} 占位符；以 = 开头表示算术表达式（如 {{=数量*单价}}），否则内容按变量名处理 */
     public static final Pattern PLACEHOLDER_RE = Pattern.compile("\\{\\{([^{}]*)\\}\\}");
-    /** 匹配 [[...]] 字符串占位符：内容原样输出，不参与数值校验 */
-    public static final Pattern STRING_RE = Pattern.compile("\\[\\[([^\\[\\]]*)\\]\\]");
-    /** 两种占位符的合集（用于一次性渲染）：group(1)=普通 {{...}}，group(2)=字符串 [[...]] */
-    public static final Pattern ALL_PLACEHOLDER_RE =
-            Pattern.compile("(\\{\\{[^{}]*\\}\\})|(\\[\\[[^\\[\\]]*\\]\\])");
-    /**
-     * 从表达式里提取变量名：以字母/中文开头，后接字母数字下划线；前面不能紧跟数字。
-     */
-    public static final Pattern IDENT_RE =
-            Pattern.compile("(?<![\\p{L}\\p{Nd}_])[\\p{L}\\p{M}][\\p{L}\\p{M}\\p{Nd}_]*");
+    /** 已弃用的 [[变量]] 语法：只用于读取模板时检测并执行一次性迁移。 */
+    public static final Pattern LEGACY_PLACEHOLDER_RE =
+            Pattern.compile("\\[\\[([^\\[\\]]+)\\]\\]");
 
     /** 根据日历选中日期生成全部自动日期变量；键与 {@link #AUTO_VAR_SET} 一一对应。 */
     public static Map<String, String> autoValues(LocalDate selectedDay) {
@@ -99,5 +92,5 @@ public final class TemplateConstants {
      */
     public static final String DEFAULT_TEMPLATE =
             "{{今日年月日}} 客户编号 {{编号}}：购买 {{数量}} 件，单价 {{单价}} 元，应付 {{=数量*单价}} 元。\n"
-            + "备注：[[备注]]\n";
+            + "备注：{{备注}}\n";
 }

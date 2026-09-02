@@ -8,11 +8,11 @@ A lightweight Java Swing desktop tool with a unified variable system for filling
 
 - **Split-pane workspace** → templates and results stay on the left, while the base date and unified variable form stay on the right; both dividers are draggable and their positions are restored on the next launch
 - **Unified variable input** → `{{variable}}` is the recommended syntax, and each variable can be Numeric, Short Text, or Multi-line Text; a blank numeric value is treated as 0
-- **Legacy syntax compatibility** → existing `[[string]]` placeholders keep working unchanged and default to Multi-line Text when no saved type exists
+- **Legacy syntax migration** → when `[[variable]]` is found, it can be backed up and converted to `{{variable}}` in one click
 - **Compact multi-line editing** → multi-line values use a one-line preview in the main window and open in a modal “Expand…” editor
 - **Session draft protection** → Numeric, Short Text, and Multi-line Text keep independent values for the current template editing session; only the active type and value persist across sessions
 - **Adjustable UI text** → Follow System, Comfortable, Large, and Extra Large presets build on the Windows/JDK DPI-aware system fonts without applying DPI twice
-- **Expression type locking** → a `=` prefix denotes an arithmetic expression, e.g. `{{=variable1/variable2}}`; referenced variables are automatically locked to Numeric, with support for `+ - * / **` and parentheses
+- **Expression type locking** → a `=` prefix denotes an arithmetic expression, e.g. `{{=variable1/variable2}}`; numeric-only or special names use explicit `[variable]` references, such as `{{=[1]*[2]}}`; referenced variables are locked to Numeric
 - **Calendar base date** → all built-in date variables use the calendar selection as their base; every launch starts with the current system date, and you can type `yyyy-MM-dd` or use the popup calendar to change it
 - **Complete date derivation** → supports yesterday/today/tomorrow, previous/current/next month, previous/current/next year, and the first/last day of the current month, with automatic month, year, and leap-year handling
 - **Per-template configuration** → application state is stored in `config.json`, while each template keeps its own values and selected types in `Config/<full-template-name>.json`
@@ -22,7 +22,7 @@ A lightweight Java Swing desktop tool with a unified variable system for filling
 - **Modeless help window** → includes syntax guidance, every built-in date variable, and a live current-template variable inventory without blocking the main window
 - **Multi-template management** → template files with any names are stored in the `Templates/` folder; you can switch via "Choose Template File…", "New Template", save changes back to the corresponding file with "Save Template", and the last-used template is remembered and restored on next startup
 - **Edit templates on the fly** → edit and save directly in the UI, or click "Open Folder" to edit with an external editor
-- **Word template support** → pick a `.docx` file as a template; `{{variable}}` and `[[string]]` placeholders in the body, tables, headers/footers, footnotes/endnotes, comments and text boxes are all replaced while keeping the original character formatting (font, bold, size, color) and paragraph formatting (alignment, indent, spacing); the finished Word document is exported via "Save Result to File"
+- **Word template support** → replace variables in the body, tables, headers/footers, footnotes/endnotes, comments, and text boxes while preserving character and paragraph formatting
 
 ## Quick Start
 
@@ -35,27 +35,82 @@ A lightweight Java Swing desktop tool with a unified variable system for filling
 
 **Edit templates**: templates are plain-text files inside the `Templates/` folder. Click "Choose Template File…" in the top bar to pick the template to use, edit in the area below, then click "Save Template" to write back to that file; "New Template" creates a new file; "Open Folder" opens the templates folder for direct template file management.
 
-**Fill variables**: every variable name appears only once in the right-hand form, even when both placeholder syntaxes are used. Ordinary variables can switch among all three types; expression variables remain Numeric. Multi-line edits are committed only when the dialog is confirmed.
+**Fill variables**: every variable name appears only once in the right-hand form. Ordinary variables can switch among all three types; expression variables remain Numeric. Multi-line edits are committed only when the dialog is confirmed.
 
 **Keyboard shortcuts**: `Ctrl+Enter` generates the result, `Ctrl+S` saves a text template, `F1` opens help, and `F4` cycles through input errors. Auxiliary dialogs close with `Esc`.
 
-**Use a Word template**: use the recommended `{{variable}}` syntax in Word; legacy `[[string]]` placeholders remain supported. A `.docx` template is always shown as a read-only preview: “Save Template” is disabled, but creating a new `.txt` template remains available. Export the generated document with “Save Result to File.”
+**Use a Word template**: use `{{variable}}` in Word. A `.docx` template is shown as a read-only preview. Export the generated document with “Save Result to File.”
 
-## Syntax
+## Variable Syntax
 
-| Syntax | Description | Example |
+### Ordinary variables
+
+Declare a variable with double braces:
+
+```text
+{{variable name}}
+```
+
+The complete content between the braces is the variable name; surrounding whitespace is ignored. A numeric-only name is therefore valid for an ordinary variable:
+
+```text
+Customer: {{customerName}}
+First item: {{1}}
+Notes: {{notes}}
+```
+
+Each ordinary variable can use one of these input types:
+
+- **Numeric**: accepts decimal, fractional, and scientific notation; a blank value is treated as `0`.
+- **Short Text**: inserted as entered and intended for one-line text.
+- **Multi-line Text**: preserves line breaks for notes or longer content.
+
+Repeated occurrences of the same variable share one input field.
+
+### Arithmetic expressions
+
+Content beginning with `=` is evaluated as an arithmetic expression:
+
+```text
+{{=quantity*unitPrice}}
+```
+
+Expressions support `+`, `-`, `*`, `/`, `**` (power), and parentheses. Results always use two decimal places. Referenced variables are locked to Numeric, and blank values are treated as `0`.
+
+Variables can be referenced in two ways:
+
+| Form | Use | Example |
 | --- | --- | --- |
-| `{{variable}}` | Recommended syntax; choose Numeric, Short Text, or Multi-line Text | `{{weather}}` |
-| `{{=variable1*variable2}}` | Arithmetic expression; referenced variables are locked to Numeric, result rounded to 2 decimals | `{{=monthlyTotal/monthlyPlan}}` |
-| `{{今日年}} {{今日年月}} {{今日年月日}}` | Calendar base date | `{{今日年月日}}` |
-| `{{昨日年}} {{昨日年月}} {{昨日年月日}}` | Day before the base date | `{{昨日年月日}}` |
-| `{{明日年}} {{明日年月}} {{明日年月日}}` | Day after the base date | `{{明日年月日}}` |
-| `{{本月年}} {{本月年月}}` | Base date's year or year-month | `{{本月年月}}` |
-| `{{上月年}} {{上月年月}}` | Previous month's year or year-month | `{{上月年月}}` |
-| `{{下月年}} {{下月年月}}` | Next month's year or year-month | `{{下月年月}}` |
-| `{{上年}} {{本年}} {{下年}}` | Previous, current, or next year relative to the base date | `{{本年}}` |
-| `{{本月月首}} {{本月月末}}` | First or last day of the base date's month | `{{本月月末}}` |
-| `[[stringName]]` | Legacy-compatible syntax; defaults to Multi-line Text and is never rewritten automatically | `[[remarks]]` |
+| Bare name | Starts with a letter and may continue with letters, digits, or underscores | `{{=quantity*unitPrice}}` |
+| `[variable name]` | Numeric-only names, spaces, special characters, or an explicit reference to any ordinary name | `{{=[1]*[2]}}` |
+
+Numeric variables and numeric literals are deliberately distinct:
+
+```text
+{{=1*2}}                  Numeric literals 1 × 2; result: 2.00
+{{=[1]*[2]}}              Variable “1” × variable “2”
+{{=quantity*2}}           Variable “quantity” × numeric literal 2
+{{=[sales quantity]*[price-discount]}}
+```
+
+Numeric literals include forms such as `5`, `3.5`, `.5`, `2e3`, and `1.5E-2`. Built-in date variables cannot participate in arithmetic.
+
+### Built-in date variables
+
+All date variables are derived from the base date selected in the UI:
+
+| Syntax | Meaning |
+| --- | --- |
+| `{{今日年}}` `{{今日年月}}` `{{今日年月日}}` | Base date |
+| `{{昨日年}}` `{{昨日年月}}` `{{昨日年月日}}` | Day before the base date |
+| `{{明日年}}` `{{明日年月}}` `{{明日年月日}}` | Day after the base date |
+| `{{本月年}}` `{{本月年月}}` | Base month |
+| `{{上月年}}` `{{上月年月}}` | Previous month |
+| `{{下月年}}` `{{下月年月}}` | Next month |
+| `{{上年}}` `{{本年}}` `{{下年}}` | Relative years |
+| `{{本月月首}}` `{{本月月末}}` | First or last day of the base month |
+
+The old `[[variable]]` form is deprecated. The app offers a one-time conversion when such a template is loaded; unconverted placeholders remain unchanged and are not filled.
 
 ## Build
 
@@ -67,45 +122,47 @@ build.bat
 
 Building requires a JDK (with `javac` and `jar`). The build script runs the regression tests first, then generates `TemplateTool.jar` on success.
 
-## Directory Structure
+## Project Structure
 
 ```
-├── build.bat               # Compiles the source and packages TemplateTool.jar (auto-detects JDK)
-├── launcher.bat            # One-click launch (auto-detects java)
-├── Templates/              # Directory for template files (any names; auto-generates example.txt and example.docx on first run)
-├── config.json             # Application state such as the last template and divider positions
-├── Config/                 # Independent variable values and types for each full template filename
-├── last_values.json        # Legacy data; read once for migration and never modified afterward
+├── build.bat                      # Compiles, tests, and packages TemplateTool.jar
+├── launcher.bat                   # One-click Windows launcher
+├── README.md / README.en.md       # Chinese and English documentation
+├── Templates/                     # .txt / .docx templates and migration backups
+├── Config/                        # Per-template variable values and types
+├── config.json                    # UI state and last selected template
+├── last_values.json               # Legacy configuration read only for migration
 ├── src/main/java/com/firefly/
-    ├── Main.java                 # Program entry: sets high-DPI / system look-and-feel, launches the main window
-    ├── TemplateToolApp.java      # Main window: UI layout, event handling, calendar base date, and data sync
-    ├── TemplateConstants.java    # Global constants: date variables and derivation, placeholders/regex, file names, default example template
-    ├── core/                     # Logic layer: template read/write, parsing, rendering, evaluation, etc.
-    │   ├── TemplateStore.java       # Reads/writes the Templates folder (list/read/write, generates example.txt and example.docx on first run)
-    │   ├── ExpressionEvaluator.java # Safe arithmetic expression evaluation (+ - * / ** and parentheses; hand-written recursive-descent parser)
-    │   ├── AppConfigStore.java      # Fault-tolerant, atomic config.json persistence
-    │   ├── TemplateConfigStore.java # Per-template configuration under Config/
-    │   ├── VariableType.java        # Numeric / Short Text / Multi-line Text types
-    │   ├── VariableInputState.java  # Unified value, type, and expression-lock state
-    │   ├── LegacyConfigMigrator.java # One-time, read-only last_values.json migration
-    │   ├── LastValuesStore.java     # Legacy reader retained for migration only
-    │   ├── MiniJson.java            # JSON read/write
-    │   ├── DocxProcessor.java       # Word (.docx) templates: text extraction + placeholder replacement + built-in example.docx generation (zero dependencies, keeps run/paragraph formatting)
-    │   ├── TemplateParser.java      # Template placeholder parsing: extracts variables / auto dates / string variables
-    │   ├── TemplateRenderer.java    # Renders a template to the final result (substitution, evaluation, as-is string output; shared resolve with Word rendering)
-    │   ├── TextFileWriter.java      # Text file read/write (UTF-8 with BOM, converts newlines to CRLF, Notepad-compatible)
-    │   └── ValueNormalizer.java     # Numeric input validation/normalization (blank is 0, non-numeric returns null)
-    └── ui/                     # Swing UI components
-        ├── DatePickerPanel.java      # Base-date input and popup calendar (syncs to the system date at startup)
-        ├── ResultPanel.java          # "Result Output" area (read-only multi-line text)
-        ├── ScrollablePanel.java      # Scrollable vertical form panel (width adapts, height follows content)
-        ├── VariableInputPanel.java  # Compact unified input panel for all three variable types
-        ├── MultilineEditorDialog.java # Modal editor for complete multi-line values
-        ├── VariableTypeConversionDialog.java # Confirmation UI for lossy type conversions
-        ├── ValidationIssueManager.java # Live issue collection and cyclic navigation
-        └── TemplateHelpDialog.java  # Modeless syntax, date-variable, and current-template help
-└── test/java/com/firefly/         # Root-level test sources (kept outside src)
-    └── TemplateFeatureTests.java # Regression tests for unified variables, config safety, and migration
+│   ├── Main.java                    # Entry point and system appearance setup
+│   ├── TemplateToolApp.java         # Main window, template loading, generation, and migration UI
+│   ├── TemplateConstants.java       # Placeholder, date-variable, and default-template constants
+│   ├── core/
+│   │   ├── TemplateParser.java      # Extracts variables, expression dependencies, and dates
+│   │   ├── ExpressionEvaluator.java # Expression tokenizer and safe recursive-descent evaluator
+│   │   ├── TemplateRenderer.java    # Plain-text substitution and expression rendering
+│   │   ├── DocxProcessor.java       # Word extraction, rendering, and cross-run migration
+│   │   ├── LegacyTemplateMigrator.java # Legacy detection, backup, and atomic migration
+│   │   ├── TemplateStore.java       # Templates directory and example management
+│   │   ├── TextFileWriter.java      # UTF-8 BOM text I/O and newline handling
+│   │   ├── ValueNormalizer.java     # Numeric validation and normalization
+│   │   ├── VariableType.java        # Numeric, Short Text, and Multi-line Text types
+│   │   ├── VariableInputState.java  # Values, session drafts, and expression locks
+│   │   ├── AppConfig*.java          # Application configuration model and storage
+│   │   ├── TemplateConfig*.java     # Per-template configuration model and storage
+│   │   ├── AtomicConfigWriter.java  # Temporary writes and atomic config replacement
+│   │   ├── JsonData.java / MiniJson.java # JSON support
+│   │   └── LegacyConfigMigrator.java / LastValuesStore.java # Legacy config migration
+│   └── ui/
+│       ├── DatePickerPanel.java      # Base-date input and calendar
+│       ├── VariableInputPanel.java   # Unified variable input and validation
+│       ├── MultilineEditorDialog.java # Multi-line text editor
+│       ├── VariableTypeConversionDialog.java # Type-conversion confirmation
+│       ├── ResultPanel.java          # Result preview
+│       ├── TemplateHelpDialog.java   # Syntax, date, and variable help
+│       ├── UiFontManager.java / FontScalePreset.java # Font scaling
+│       └── ValidationIssue*.java / IssueSeverity.java # Issue tracking and navigation
+└── test/java/com/firefly/
+    └── TemplateFeatureTests.java    # Variable, expression, config, and migration tests
 ```
 
 ## License

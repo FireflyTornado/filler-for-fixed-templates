@@ -1,6 +1,7 @@
 package com.firefly.ui;
 
 import com.firefly.TemplateConstants;
+import com.firefly.core.ExpressionEvaluator;
 import com.firefly.core.TemplateParser;
 import com.firefly.core.VariableInputState;
 
@@ -86,10 +87,8 @@ public final class TemplateHelpDialog extends JDialog {
         currentModel.setRowCount(0);
         for (TemplateParser.VariableSpec spec : parsed.variables()) {
             VariableInputState state = states.get(spec.name());
-            String syntax = spec.braceSyntax() && spec.legacySyntax() ? "{{ }} + [[ ]]"
-                    : (spec.legacySyntax() ? "[[ ]]" : "{{ }}");
             currentModel.addRow(new Object[]{spec.name(), state == null ? spec.defaultType() : state.type(),
-                    syntax, spec.numericLocked() ? "是" : "否", spec.numericLocked() ? "数值" : "—",
+                    "{{ }}", spec.numericLocked() ? "是" : "否", spec.numericLocked() ? "数值" : "—",
                     counts.getOrDefault(spec.name(), 0)});
         }
         for (String auto : parsed.autoVariables()) {
@@ -101,9 +100,9 @@ public final class TemplateHelpDialog extends JDialog {
             String content = matcher.group(1).trim();
             if (!TemplateParser.isExpression(content)) continue;
             String expression = content.substring(1).trim();
-            List<String> dependencies = new ArrayList<>();
-            Matcher identifiers = TemplateConstants.IDENT_RE.matcher(expression);
-            while (identifiers.find()) dependencies.add(identifiers.group());
+            List<String> dependencies;
+            try { dependencies = ExpressionEvaluator.referencedVariables(expression); }
+            catch (ExpressionEvaluator.EvalException e) { dependencies = List.of("语法错误"); }
             currentModel.addRow(new Object[]{"=" + expression, "表达式", "{{= }}",
                     String.join("、", dependencies), "依赖项锁定", 1});
         }
@@ -148,8 +147,8 @@ public final class TemplateHelpDialog extends JDialog {
     private static String syntaxText() {
         return "模板变量语法\n\n"
                 + "{{变量}}    推荐的普通变量格式，类型在主界面右侧选择。示例：{{天气}}\n\n"
-                + "[[变量]]    旧模板兼容格式，未保存类型时默认多行文本。示例：[[备注]]\n\n"
                 + "{{=表达式}} 数值表达式。示例：{{=数量*单价}}\n\n"
+                + "[变量名]    表达式内的显式变量引用；纯数字或特殊名称必须使用。示例：{{=[1]*[2]}}\n\n"
                 + "• 数值变量留空按 0 处理。\n"
                 + "• 短字符串原样替换。\n"
                 + "• 多行文本保留换行。\n"
@@ -194,10 +193,9 @@ public final class TemplateHelpDialog extends JDialog {
 
     private static Map<String, Integer> occurrenceCounts(String template) {
         Map<String, Integer> counts = new LinkedHashMap<>();
-        Matcher matcher = TemplateConstants.ALL_PLACEHOLDER_RE.matcher(template);
+        Matcher matcher = TemplateConstants.PLACEHOLDER_RE.matcher(template);
         while (matcher.find()) {
-            String whole = matcher.group(2) != null ? matcher.group(2) : matcher.group(1);
-            String content = whole.substring(2, whole.length() - 2).trim();
+            String content = matcher.group(1).trim();
             if (content.isEmpty() || TemplateParser.isExpression(content)) continue;
             counts.merge(content, 1, Integer::sum);
         }

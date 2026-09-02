@@ -171,16 +171,12 @@ public final class DocxProcessor {
     // ---------- 渲染（占位符替换，保留格式） ----------
 
     /**
-     * 把 src 这个 docx 模板渲染成 dst：替换所有 {{变量}}/{{=表达式}}/{{日期}}/[[字符串]] 占位符。
+     * 把 src 这个 docx 模板渲染成 dst：替换所有 {{变量}}/{{=表达式}}/{{日期}} 占位符。
      * 成功后返回渲染后文档的纯文本（供界面预览）；表达式出错时删除 dst 并返回错误信息。
      */
     public static TemplateRenderer.RenderResult render(Path src, Path dst,
                                                        Map<String, String> values,
-                                                       Map<String, String> autoVals,
-                                                       Map<String, String> stringValues) throws IOException {
-        if (stringValues == null) {
-            stringValues = Map.of();
-        }
+                                                       Map<String, String> autoVals) throws IOException {
         try {
             try (ZipFile zin = new ZipFile(src.toFile(), StandardCharsets.UTF_8);
                  ZipOutputStream zout = new ZipOutputStream(Files.newOutputStream(dst), StandardCharsets.UTF_8)) {
@@ -195,7 +191,7 @@ public final class DocxProcessor {
                         try (InputStream in = zin.getInputStream(e)) {
                             bytes = in.readAllBytes();
                         }
-                        zout.write(processPart(bytes, values, autoVals, stringValues));
+                        zout.write(processPart(bytes, values, autoVals));
                     } else {
                         try (InputStream in = zin.getInputStream(e)) {
                             in.transferTo(zout);
@@ -211,18 +207,74 @@ public final class DocxProcessor {
         return new TemplateRenderer.RenderResult(extractText(dst), null);
     }
 
-    /** 新版统一变量入口：{{变量}} 与 [[变量]] 共用同一份变量值。 */
+    /** 统一变量入口。 */
     public static TemplateRenderer.RenderResult renderUnified(Path src, Path dst,
                                                                Map<String, String> values,
                                                                Map<String, String> autoVals)
             throws IOException {
-        return render(src, dst, values, autoVals, values);
+        return render(src, dst, values, autoVals);
+    }
+
+    /** 将 Word 各文本部件中的 [[变量]] 改成 {{变量}}，包括跨 run 的占位符。 */
+    public static void migrateLegacyPlaceholders(Path src, Path dst) throws IOException {
+        try (ZipFile zin = new ZipFile(src.toFile(), StandardCharsets.UTF_8);
+             ZipOutputStream zout = new ZipOutputStream(Files.newOutputStream(dst), StandardCharsets.UTF_8)) {
+            Enumeration<? extends ZipEntry> en = zin.entries();
+            while (en.hasMoreElements()) {
+                ZipEntry entry = en.nextElement();
+                ZipEntry output = new ZipEntry(entry.getName());
+                output.setTime(entry.getTime());
+                zout.putNextEntry(output);
+                try (InputStream in = zin.getInputStream(entry)) {
+                    if (isTextPart(entry.getName())) {
+                        zout.write(migrateLegacyPart(in.readAllBytes()));
+                    } else {
+                        in.transferTo(zout);
+                    }
+                }
+                zout.closeEntry();
+            }
+        }
+    }
+
+    private static byte[] migrateLegacyPart(byte[] xml) throws IOException {
+        Document doc;
+        try {
+            doc = newBuilder().parse(new ByteArrayInputStream(xml));
+        } catch (SAXException e) {
+            throw new IOException("无法解析 Word 文档部件：", e);
+        }
+        NodeList ps = doc.getElementsByTagNameNS(W_NS, "p");
+        for (int i = 0; i < ps.getLength(); i++) migrateLegacyParagraph((Element) ps.item(i));
+        return serialize(doc);
+    }
+
+    private static void migrateLegacyParagraph(Element paragraph) {
+        List<Frag> frags = new ArrayList<>();
+        collectFrags(paragraph, frags);
+        StringBuilder text = new StringBuilder();
+        for (Frag frag : frags) {
+            frag.start = text.length();
+            text.append(frag.text);
+            frag.end = text.length();
+        }
+        List<int[]> ranges = new ArrayList<>();
+        List<String> replacements = new ArrayList<>();
+        Matcher matcher = TemplateConstants.LEGACY_PLACEHOLDER_RE.matcher(text);
+        while (matcher.find()) {
+            if (matcher.group(1).trim().isEmpty()) continue;
+            ranges.add(new int[]{matcher.start(), matcher.end()});
+            replacements.add("{{" + matcher.group(1) + "}}");
+        }
+        for (int i = ranges.size() - 1; i >= 0; i--) {
+            int[] range = ranges.get(i);
+            replaceRange(range[0], range[1], replacements.get(i), frags);
+        }
     }
 
     /** 处理一个部件：解析 XML → 逐段替换 → 序列化回 XML 字节。 */
     private static byte[] processPart(byte[] xml, Map<String, String> values,
-                                      Map<String, String> autoVals,
-                                      Map<String, String> stringValues)
+                                      Map<String, String> autoVals)
             throws IOException, ExpressionEvaluator.EvalException {
         Document doc;
         try {
@@ -232,7 +284,7 @@ public final class DocxProcessor {
         }
         NodeList ps = doc.getElementsByTagNameNS(W_NS, "p");
         for (int i = 0; i < ps.getLength(); i++) {
-            processParagraph((Element) ps.item(i), values, autoVals, stringValues);
+            processParagraph((Element) ps.item(i), values, autoVals);
         }
         return serialize(doc);
     }
@@ -242,8 +294,7 @@ public final class DocxProcessor {
      * 再从后往前应用替换（前面的匹配偏移不受影响；替换值里即使出现 {{…}} 也不会被再次替换）。
      */
     private static void processParagraph(Element p, Map<String, String> values,
-                                         Map<String, String> autoVals,
-                                         Map<String, String> stringValues)
+                                         Map<String, String> autoVals)
             throws ExpressionEvaluator.EvalException {
         List<Frag> frags = new ArrayList<>();
         collectFrags(p, frags);
@@ -260,31 +311,40 @@ public final class DocxProcessor {
         String text = concat.toString();
 
         List<Match> matches = new ArrayList<>();
-        Matcher m = TemplateConstants.ALL_PLACEHOLDER_RE.matcher(text);
+        Matcher m = TemplateConstants.PLACEHOLDER_RE.matcher(text);
         while (m.find()) {
-            boolean isString = m.group(2) != null;
-            String whole = isString ? m.group(2) : m.group(1);
-            String content = whole.substring(2, whole.length() - 2).trim();
+            String whole = m.group();
+            String content = m.group(1).trim();
             if (content.isEmpty()) {
-                continue; // {{}} / [[]] 原样保留
+                continue; // {{}} 原样保留
             }
-            matches.add(new Match(m.start(), m.end(), whole, content, isString));
+            matches.add(new Match(m.start(), m.end(), whole, content));
         }
         for (int i = matches.size() - 1; i >= 0; i--) {
-            applyMatch(matches.get(i), frags, values, autoVals, stringValues);
+            applyMatch(matches.get(i), frags, values, autoVals);
         }
     }
 
     /** 一个占位符匹配（在段落拼接文本中的位置 + 内容）。 */
-    private record Match(int start, int end, String whole, String content, boolean isString) {
+    private record Match(int start, int end, String whole, String content) {
     }
 
     /** 把单个占位符替换成值。 */
     private static void applyMatch(Match match, List<Frag> frags,
-                                   Map<String, String> values, Map<String, String> autoVals,
-                                   Map<String, String> stringValues)
+                                   Map<String, String> values, Map<String, String> autoVals)
             throws ExpressionEvaluator.EvalException {
-        // 定位占位符覆盖的片段区间 [k, m]
+        String value;
+        try {
+            value = TemplateRenderer.resolve(match.whole(), match.content(), values, autoVals);
+        } catch (ExpressionEvaluator.EvalException e) {
+            String expr = match.content().substring(1).trim();
+            throw new ExpressionEvaluator.EvalException("表达式「" + expr + "」" + e.getMessage());
+        }
+        replaceRange(match.start(), match.end(), value, frags);
+    }
+
+    /** 替换段落拼接文本中的一个范围，支持范围跨越多个 Word run。 */
+    private static void replaceRange(int start, int end, String value, List<Frag> frags) {
         int k = -1;
         int m = -1;
         for (int i = 0; i < frags.size(); i++) {
@@ -292,10 +352,10 @@ public final class DocxProcessor {
             if (f.text.isEmpty()) {
                 continue;
             }
-            if (k < 0 && f.start <= match.start() && match.start() < f.end) {
+            if (k < 0 && f.start <= start && start < f.end) {
                 k = i;
             }
-            if (f.start < match.end() && match.end() <= f.end) {
+            if (f.start < end && end <= f.end) {
                 m = i;
             }
         }
@@ -303,19 +363,10 @@ public final class DocxProcessor {
             return; // 理论不可达：占位符必然落在某个片段内
         }
 
-        String value;
-        try {
-            value = TemplateRenderer.resolve(match.whole(), match.content(), match.isString(),
-                    values, autoVals, stringValues);
-        } catch (ExpressionEvaluator.EvalException e) {
-            String expr = match.content().substring(1).trim();
-            throw new ExpressionEvaluator.EvalException("表达式「" + expr + "」" + e.getMessage());
-        }
-
         Frag fk = frags.get(k);
-        String prefix = fk.text.substring(0, match.start() - fk.start);
+        String prefix = fk.text.substring(0, start - fk.start);
         if (k == m) {
-            String suffix = fk.text.substring(match.end() - fk.start);
+            String suffix = fk.text.substring(end - fk.start);
             replaceTextInRun(fk, prefix, suffix, value);
         } else {
             // 占位符跨了多个片段：值写入起始片段所在 run，中间片段吞掉，结束片段保留占位符之后的文本
@@ -324,7 +375,7 @@ public final class DocxProcessor {
                 frags.get(i).consume();
             }
             Frag fm = frags.get(m);
-            fm.setText(fm.text.substring(match.end() - fm.start));
+            fm.setText(fm.text.substring(end - fm.start));
         }
     }
 
@@ -527,7 +578,7 @@ public final class DocxProcessor {
             """;
 
     /**
-     * 示例文档正文：占位符与 example.txt 完全对应（{{今日年月日}}/{{编号}}/{{数量}}/{{单价}}/{{=数量*单价}}/[[备注]]），
+     * 示例文档正文：占位符与 example.txt 完全对应（{{今日年月日}}/{{编号}}/{{数量}}/{{单价}}/{{=数量*单价}}/{{备注}}），
      * 并演示 Word 的格式保留能力（居中加粗标题、带边框表格、单元格加粗表头）。
      */
     private static final String EXAMPLE_DOCUMENT_XML = """
@@ -587,7 +638,7 @@ public final class DocxProcessor {
                     <w:spacing w:before="240"/>
                   </w:pPr>
                   <w:r>
-                    <w:t>备注：[[备注]]</w:t>
+                    <w:t>备注：{{备注}}</w:t>
                   </w:r>
                 </w:p>
                 <w:sectPr/>

@@ -317,8 +317,7 @@ public final class VariableInputPanel extends JPanel {
         return "共 " + lines + " 行 / " + state.value().length() + " 个字符";
     }
     private static String syntaxTooltip(VariableInputState state) {
-        String syntax = state.braceSyntax() && state.legacyMultilineSyntax() ? "{{变量}} 与 [[变量]]"
-                : (state.legacyMultilineSyntax() ? "旧格式 [[变量]]" : "推荐格式 {{变量}}");
+        String syntax = "{{变量}}";
         return state.numericLocked() ? syntax + "；表达式使用，锁定为数值" : syntax;
     }
 
