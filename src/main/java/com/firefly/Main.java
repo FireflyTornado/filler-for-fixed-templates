@@ -27,6 +27,7 @@ public final class Main {
             UiFontManager.initialize();
             TemplateToolApp app = new TemplateToolApp(appDir());
             app.setVisible(true);
+            app.initializeAfterShowing();
         });
     }
 

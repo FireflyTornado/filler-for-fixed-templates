@@ -32,6 +32,7 @@ import java.util.*;
 
 /** 主窗口：编排左右分栏，并协调模板、统一变量状态、生成结果与配置。 */
 public final class TemplateToolApp extends JFrame {
+    private final Path appDir;
     private final TemplateStore templateStore;
     private final AppConfigStore appConfigStore;
     private final TemplateConfigStore templateConfigStore;
@@ -61,9 +62,11 @@ public final class TemplateToolApp extends JFrame {
     private TemplateHelpDialog helpDialog;
     private String fullStatusText = " ";
     private FontScalePreset fontScalePreset;
+    private boolean initializationScheduled;
 
     public TemplateToolApp(Path appDir) {
         super("模板填充工具");
+        this.appDir = appDir;
         templateStore = new TemplateStore(appDir);
         appConfigStore = new AppConfigStore(appDir);
         templateConfigStore = new TemplateConfigStore(appDir);
@@ -85,9 +88,17 @@ public final class TemplateToolApp extends JFrame {
         buildUi();
         installChangeListeners();
         installKeyboardActions();
-        initTemplates(appDir);
         setLocationRelativeTo(null);
-        SwingUtilities.invokeLater(this::restoreDividerLocations);
+    }
+
+    /** 主窗口 setVisible(true) 后调用；延后一轮以便窗口先完成打开与首帧绘制。 */
+    void initializeAfterShowing() {
+        if (initializationScheduled) return;
+        initializationScheduled = true;
+        SwingUtilities.invokeLater(() -> {
+            restoreDividerLocations();
+            initTemplates(appDir);
+        });
     }
 
     private void buildUi() {
@@ -188,6 +199,12 @@ public final class TemplateToolApp extends JFrame {
         variablePanel = new VariableInputPanel(issueManager);
         variablePanel.setStatusListener(this::setStatus);
         variablePanel.setCommitListener(() -> saveCurrentTemplateConfig(false));
+        variablePanel.setDecimalPlacesListener(decimalPlaces -> {
+            if (!programmaticUpdate) {
+                invalidateResult("小数位数已改为 " + decimalPlaces + " 位，请重新生成。");
+                templateConfigSaveTimer.restart();
+            }
+        });
         right.add(variablePanel);
         return right;
     }
@@ -325,45 +342,10 @@ public final class TemplateToolApp extends JFrame {
     private void loadTemplate(String name) {
         boolean word = DocxProcessor.isDocxName(name);
         String text;
-        String migrationStatus = null;
         try {
             text = word ? DocxProcessor.extractText(templateStore.templateFile(name))
                     : templateStore.readTemplate(name);
         } catch (IOException e) { showError("无法读取模板文件：\n" + e, "读取失败"); return; }
-        LegacyTemplateMigrator.Scan legacy = LegacyTemplateMigrator.scan(text);
-        if (legacy.found()) {
-            Object[] options = {"一键替换", "取消"};
-            String names = String.join("、", legacy.variableNames());
-            String message = "检测到当前模板包含 " + legacy.count() + " 处已弃用的 [[变量]] 写法。\n"
-                    + "新版不再识别这种写法。是否将它们转换为 {{变量}}？\n\n"
-                    + "变量：" + names + "\n\n替换前会自动备份原模板。";
-            int choice = JOptionPane.showOptionDialog(this, message, "发现旧模板语法",
-                    JOptionPane.DEFAULT_OPTION, JOptionPane.WARNING_MESSAGE,
-                    null, options, options[0]);
-            if (choice == 0) {
-                String originalText = text;
-                LegacyTemplateMigrator.MigrationResult migrated;
-                try {
-                    migrated = LegacyTemplateMigrator.migrate(
-                            templateStore.templateFile(name), word, originalText);
-                    text = word ? DocxProcessor.extractText(templateStore.templateFile(name))
-                            : templateStore.readTemplate(name);
-                } catch (IOException e) {
-                    showError("旧模板语法转换失败，原模板未被替换：\n" + e, "转换失败");
-                    return;
-                }
-                try {
-                    preserveMigratedVariableTypes(name, originalText, migrated.scan().variableNames());
-                } catch (IOException e) {
-                    showWarning("模板语法已转换，但无法保存原有的多行文本类型：\n" + e,
-                            "变量类型未保存");
-                }
-                migrationStatus = "已转换 " + migrated.scan().count() + " 处旧写法；备份："
-                        + migrated.backup().getFileName();
-            } else {
-                migrationStatus = "模板仍包含已弃用的 [[变量]] 写法，本次未转换。";
-            }
-        }
         templateConfigSaveTimer.stop();
         if (!currentTemplateName.isEmpty() && !saveCurrentTemplateConfig(true)) return;
         sessionVariableStates.clear();
@@ -373,13 +355,78 @@ public final class TemplateToolApp extends JFrame {
         setTemplateText(text);
         setDocxMode(word);
         persistedTemplateConfig = templateConfigStore.load(name);
+        setDecimalPlacesFromConfig();
         variableStates = new LinkedHashMap<>();
         rebuildVariableStates(TemplateParser.parse(text));
         invalidateResult(null);
         updateDirtyIndicator();
         rememberTemplate(name);
-        setStatus(migrationStatus != null ? migrationStatus
-                : "已加载模板：" + name + (word ? "（Word 模板，只读预览）" : ""));
+        setStatus("已加载模板：" + name + (word ? "（Word 模板，只读预览）" : ""));
+
+        // 先让模板名称、正文和变量面板完成一次绘制，再询问是否迁移当前模板。
+        LegacyTemplateMigrator.Scan legacy = LegacyTemplateMigrator.scan(text);
+        if (legacy.found()) {
+            String displayedText = text;
+            SwingUtilities.invokeLater(() -> {
+                if (!name.equals(currentTemplateName)
+                        || !displayedText.equals(currentTemplate)
+                        || !displayedText.equals(lastDiskContent)) return;
+                templateNameLabel.paintImmediately(templateNameLabel.getVisibleRect());
+                templateText.paintImmediately(templateText.getVisibleRect());
+                promptLegacyTemplateMigration(name, word, displayedText, legacy);
+            });
+        }
+    }
+
+    private void promptLegacyTemplateMigration(String name, boolean word, String originalText,
+                                               LegacyTemplateMigrator.Scan legacy) {
+        Object[] options = {"一键替换", "取消"};
+        String names = String.join("、", legacy.variableNames());
+        String message = "当前显示的模板“" + name + "”包含 " + legacy.count()
+                + " 处已弃用的 [[变量]] 写法。\n"
+                + "是否将它们转换为 {{变量}}？\n\n"
+                + "变量：" + names + "\n\n替换前会自动备份原模板。";
+        int choice = JOptionPane.showOptionDialog(this, message, "转换当前模板的旧语法",
+                JOptionPane.DEFAULT_OPTION, JOptionPane.WARNING_MESSAGE,
+                null, options, options[0]);
+        if (choice != 0) {
+            setStatus("模板“" + name + "”仍包含已弃用的 [[变量]] 写法，本次未转换。");
+            return;
+        }
+
+        LegacyTemplateMigrator.MigrationResult migrated;
+        String migratedText;
+        try {
+            migrated = LegacyTemplateMigrator.migrate(
+                    templateStore.templateFile(name), word, originalText);
+            migratedText = word ? DocxProcessor.extractText(templateStore.templateFile(name))
+                    : templateStore.readTemplate(name);
+        } catch (IOException e) {
+            showError("旧模板语法转换失败，原模板未被替换：\n" + e, "转换失败");
+            setStatus("模板“" + name + "”的旧语法转换失败。");
+            return;
+        }
+        try {
+            preserveMigratedVariableTypes(name, originalText, migrated.scan().variableNames());
+        } catch (IOException e) {
+            showWarning("模板语法已转换，但无法保存原有的多行文本类型：\n" + e,
+                    "变量类型未保存");
+        }
+
+        // 对话框为模态窗口，确认期间当前模板不会切换；迁移后刷新同一份预览和变量配置。
+        currentTemplate = migratedText;
+        lastDiskContent = migratedText;
+        currentTemplateSaved = true;
+        issueManager.clear();
+        setTemplateText(migratedText);
+        persistedTemplateConfig = templateConfigStore.load(name);
+        setDecimalPlacesFromConfig();
+        variableStates = new LinkedHashMap<>();
+        rebuildVariableStates(TemplateParser.parse(migratedText));
+        invalidateResult(null);
+        updateDirtyIndicator();
+        setStatus("已转换 " + migrated.scan().count() + " 处旧写法；备份："
+                + migrated.backup().getFileName());
     }
 
     /** 仅为过去只使用 [[变量]] 且没有保存类型的变量保留多行文本默认值。 */
@@ -451,6 +498,7 @@ public final class TemplateToolApp extends JFrame {
         currentTemplateName = name; currentTemplate = ""; lastDiskContent = "";
         issueManager.clear();
         currentTemplateSaved = false; persistedTemplateConfig = templateConfigStore.load(name);
+        setDecimalPlacesFromConfig();
         variableStates = new LinkedHashMap<>();
         setDocxMode(false); setTemplateText(""); rebuildVariableStates(TemplateParser.parse(""));
         invalidateResult(null); updateDirtyIndicator(); rememberTemplate(name);
@@ -519,7 +567,8 @@ public final class TemplateToolApp extends JFrame {
     private boolean saveCurrentTemplateConfig(boolean notify) {
         if (currentTemplateName.isEmpty()) return true;
         try {
-            templateConfigStore.save(currentTemplateName, sessionVariableStates);
+            templateConfigStore.save(currentTemplateName, sessionVariableStates,
+                    variablePanel.decimalPlaces());
             persistedTemplateConfig = templateConfigStore.load(currentTemplateName);
             return true;
         } catch (IOException | IllegalArgumentException e) {
@@ -540,7 +589,8 @@ public final class TemplateToolApp extends JFrame {
         TemplateParser.ParsedTemplate parsed = TemplateParser.parse(currentTemplate);
         Map<String, String> auto = TemplateConstants.autoValues(date);
         if (docxMode) { generateDocx(parsed, values, auto, date); return; }
-        TemplateRenderer.RenderResult result = TemplateRenderer.renderUnified(currentTemplate, values, auto);
+        TemplateRenderer.RenderResult result = TemplateRenderer.renderUnified(
+                currentTemplate, values, auto, numericVariableNames(), variablePanel.decimalPlaces());
         if (result.hasError()) { showWarning(result.error(), "表达式计算失败"); setStatus("表达式计算失败，未生成结果。"); return; }
         resultPanel.setText(result.result()); markResultValid();
         setStatus(buildSuccessMessage(parsed, date)); saveCurrentTemplateConfig(false);
@@ -563,13 +613,22 @@ public final class TemplateToolApp extends JFrame {
         return values;
     }
 
+    private Set<String> numericVariableNames() {
+        Set<String> names = new LinkedHashSet<>();
+        for (VariableInputState state : variableStates.values()) {
+            if (state.type() == VariableType.NUMBER) names.add(state.name());
+        }
+        return names;
+    }
+
     private void generateDocx(TemplateParser.ParsedTemplate parsed, Map<String, String> values,
                               Map<String, String> auto, LocalDate date) {
         Path temp = null;
         try {
             temp = Files.createTempFile("tt_result", ".docx"); temp.toFile().deleteOnExit();
             TemplateRenderer.RenderResult result = DocxProcessor.renderUnified(
-                    templateStore.templateFile(currentTemplateName), temp, values, auto);
+                    templateStore.templateFile(currentTemplateName), temp, values, auto,
+                    numericVariableNames(), variablePanel.decimalPlaces());
             if (result.hasError()) { Files.deleteIfExists(temp); showWarning(result.error(), "表达式计算失败"); return; }
             currentDocxResult = temp; resultPanel.setText(result.result()); markResultValid();
             setStatus(buildSuccessMessage(parsed, date) + " 可导出 Word 文档。"); saveCurrentTemplateConfig(false);
@@ -592,6 +651,12 @@ public final class TemplateToolApp extends JFrame {
     }
 
     private void markResultValid() { resultValid = true; copyBtn.setEnabled(true); saveResultBtn.setEnabled(true); }
+
+    private void setDecimalPlacesFromConfig() {
+        programmaticUpdate = true;
+        try { variablePanel.setDecimalPlaces(persistedTemplateConfig.decimalPlaces()); }
+        finally { programmaticUpdate = false; }
+    }
     private boolean requireResult() {
         if (resultValid) return true;
         JOptionPane.showMessageDialog(this, "结果已失效，请重新点击“生成结果”。", "提示", JOptionPane.INFORMATION_MESSAGE);

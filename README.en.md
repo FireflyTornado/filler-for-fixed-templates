@@ -12,10 +12,10 @@ A lightweight Java Swing desktop tool with a unified variable system for filling
 - **Compact multi-line editing** → multi-line values use a one-line preview in the main window and open in a modal “Expand…” editor
 - **Session draft protection** → Numeric, Short Text, and Multi-line Text keep independent values for the current template editing session; only the active type and value persist across sessions
 - **Adjustable UI text** → Follow System, Comfortable, Large, and Extra Large presets build on the Windows/JDK DPI-aware system fonts without applying DPI twice
-- **Expression type locking** → a `=` prefix denotes an arithmetic expression, e.g. `{{=variable1/variable2}}`; numeric-only or special names use explicit `[variable]` references, such as `{{=[1]*[2]}}`; referenced variables are locked to Numeric
+- **Unified decimal places** → use `−` / `+` in the variable form to keep 0–10 decimal places for the current template; numeric replacements and expression results share the same setting, defaulting to two places
 - **Calendar base date** → all built-in date variables use the calendar selection as their base; every launch starts with the current system date, and you can type `yyyy-MM-dd` or use the popup calendar to change it
 - **Complete date derivation** → supports yesterday/today/tomorrow, previous/current/next month, previous/current/next year, and the first/last day of the current month, with automatic month, year, and leap-year handling
-- **Per-template configuration** → application state is stored in `config.json`, while each template keeps its own values and selected types in `Config/<full-template-name>.json`
+- **Per-template configuration** → application state is stored in `config.json`, while each template keeps its own values, selected types, and decimal places in `Config/<full-template-name>.json`
 - **Safe legacy migration** → existing `last_values.json` data is migrated once in read-only mode and the legacy file is never modified or deleted; new configuration writes use temporary files and atomic replacement where supported
 - **Generated-result protection** → changing the template, variable value, variable type, or base date immediately invalidates the old result and disables copying or saving it
 - **Error navigation and accessibility** → numeric and date errors update live with non-color indicators; use “Locate Error” or `F4` to cycle through them, plus `F1` for help, `Ctrl+Enter` to generate, and `Ctrl+S` to save the template
@@ -35,7 +35,7 @@ A lightweight Java Swing desktop tool with a unified variable system for filling
 
 **Edit templates**: templates are plain-text files inside the `Templates/` folder. Click "Choose Template File…" in the top bar to pick the template to use, edit in the area below, then click "Save Template" to write back to that file; "New Template" creates a new file; "Open Folder" opens the templates folder for direct template file management.
 
-**Fill variables**: every variable name appears only once in the right-hand form. Ordinary variables can switch among all three types; expression variables remain Numeric. Multi-line edits are committed only when the dialog is confirmed.
+**Fill variables**: every variable name appears only once in the right-hand form. Ordinary variables can switch among all three types; expression variables remain Numeric. Use `−` / `+` at the top to adjust decimal places for the current template. Multi-line edits are committed only when the dialog is confirmed.
 
 **Keyboard shortcuts**: `Ctrl+Enter` generates the result, `Ctrl+S` saves a text template, `F1` opens help, and `F4` cycles through input errors. Auxiliary dialogs close with `Esc`.
 
@@ -61,7 +61,7 @@ Notes: {{notes}}
 
 Each ordinary variable can use one of these input types:
 
-- **Numeric**: accepts decimal, fractional, and scientific notation; a blank value is treated as `0`.
+- **Numeric**: accepts decimal, fractional, and scientific notation; a blank value is treated as `0`; replacements are rounded to the template's decimal-place setting and padded with trailing zeros.
 - **Short Text**: inserted as entered and intended for one-line text.
 - **Multi-line Text**: preserves line breaks for notes or longer content.
 
@@ -75,7 +75,7 @@ Content beginning with `=` is evaluated as an arithmetic expression:
 {{=quantity*unitPrice}}
 ```
 
-Expressions support `+`, `-`, `*`, `/`, `**` (power), and parentheses. Results always use two decimal places. Referenced variables are locked to Numeric, and blank values are treated as `0`.
+Expressions support `+`, `-`, `*`, `/`, `**` (power), and parentheses. Results use the same 0–10 decimal-place setting as ordinary numeric replacements (two by default) and are rounded half up. Referenced variables are locked to Numeric, and blank values are treated as `0`.
 
 Variables can be referenced in two ways:
 
@@ -127,11 +127,13 @@ Building requires a JDK (with `javac` and `jar`). The build script runs the regr
 ```
 ├── build.bat                      # Compiles, tests, and packages TemplateTool.jar
 ├── launcher.bat                   # One-click Windows launcher
+├── TemplateTool.jar               # Runnable application generated by build.bat
 ├── README.md / README.en.md       # Chinese and English documentation
-├── Templates/                     # .txt / .docx templates and migration backups
-├── Config/                        # Per-template variable values and types
-├── config.json                    # UI state and last selected template
-├── last_values.json               # Legacy configuration read only for migration
+├── LICENSE                        # MIT license
+├── Templates/                     # Created automatically on first run; stores templates and migration backups
+├── Config/                        # Created at runtime; stores per-template values, types, and decimal places
+├── config.json                    # Generated at runtime; stores UI state and the last selected template
+├── last_values.json               # Generated only by legacy versions; read by the current version for migration
 ├── src/main/java/com/firefly/
 │   ├── Main.java                    # Entry point and system appearance setup
 │   ├── TemplateToolApp.java         # Main window, template loading, generation, and migration UI
@@ -139,6 +141,7 @@ Building requires a JDK (with `javac` and `jar`). The build script runs the regr
 │   ├── core/
 │   │   ├── TemplateParser.java      # Extracts variables, expression dependencies, and dates
 │   │   ├── ExpressionEvaluator.java # Expression tokenizer and safe recursive-descent evaluator
+│   │   ├── NumericFormatter.java   # Shared decimal formatting for numeric values and expressions
 │   │   ├── TemplateRenderer.java    # Plain-text substitution and expression rendering
 │   │   ├── DocxProcessor.java       # Word extraction, rendering, and cross-run migration
 │   │   ├── LegacyTemplateMigrator.java # Legacy detection, backup, and atomic migration
@@ -148,13 +151,14 @@ Building requires a JDK (with `javac` and `jar`). The build script runs the regr
 │   │   ├── VariableType.java        # Numeric, Short Text, and Multi-line Text types
 │   │   ├── VariableInputState.java  # Values, session drafts, and expression locks
 │   │   ├── AppConfig*.java          # Application configuration model and storage
-│   │   ├── TemplateConfig*.java     # Per-template configuration model and storage
+│   │   ├── TemplateConfig*.java     # Per-template variable and decimal-place configuration
 │   │   ├── AtomicConfigWriter.java  # Temporary writes and atomic config replacement
 │   │   ├── JsonData.java / MiniJson.java # JSON support
 │   │   └── LegacyConfigMigrator.java / LastValuesStore.java # Legacy config migration
 │   └── ui/
 │       ├── DatePickerPanel.java      # Base-date input and calendar
 │       ├── VariableInputPanel.java   # Unified variable input and validation
+│       ├── ScrollablePanel.java      # Adaptive scrolling container for the variable form
 │       ├── MultilineEditorDialog.java # Multi-line text editor
 │       ├── VariableTypeConversionDialog.java # Type-conversion confirmation
 │       ├── ResultPanel.java          # Result preview
@@ -162,7 +166,7 @@ Building requires a JDK (with `javac` and `jar`). The build script runs the regr
 │       ├── UiFontManager.java / FontScalePreset.java # Font scaling
 │       └── ValidationIssue*.java / IssueSeverity.java # Issue tracking and navigation
 └── test/java/com/firefly/
-    └── TemplateFeatureTests.java    # Variable, expression, config, and migration tests
+    └── TemplateFeatureTests.java    # Variable, numeric-format, Word, config, and migration tests
 ```
 
 ## License

@@ -2,8 +2,8 @@ package com.firefly.core;
 
 import com.firefly.TemplateConstants;
 
-import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 
 /**
@@ -11,7 +11,7 @@ import java.util.regex.Matcher;
  * 规则：
  *   * 普通 {{变量名}}           -> 用户输入的值（纯数字内容也作为变量名处理）
  *   * 自动日期变量               -> 日历基准日期及其派生日期
- *   * {{=数量*单价}} 等表达式   -> 求值并保留两位小数
+ *   * 数值变量和表达式结果       -> 按当前模板设置统一保留小数位数
  *   * 已弃用的 [[变量]]          -> 原样保留，由加载模板时的迁移功能处理
  */
 public final class TemplateRenderer {
@@ -33,9 +33,26 @@ public final class TemplateRenderer {
         return render(template, values, autoVals);
     }
 
+    public static RenderResult renderUnified(String template,
+                                             Map<String, String> values,
+                                             Map<String, String> autoVals,
+                                             Set<String> numericVariables,
+                                             int decimalPlaces) {
+        return render(template, values, autoVals, numericVariables, decimalPlaces);
+    }
+
     public static RenderResult render(String template,
                                       Map<String, String> values,
                                       Map<String, String> autoVals) {
+        return render(template, values, autoVals, Set.of(),
+                NumericFormatter.DEFAULT_DECIMAL_PLACES);
+    }
+
+    public static RenderResult render(String template,
+                                      Map<String, String> values,
+                                      Map<String, String> autoVals,
+                                      Set<String> numericVariables,
+                                      int decimalPlaces) {
         StringBuilder out = new StringBuilder();
         Matcher m = TemplateConstants.PLACEHOLDER_RE.matcher(template);
         int pos = 0;
@@ -47,7 +64,8 @@ public final class TemplateRenderer {
                 out.append(whole);              // {{}} 原样保留
             } else {
                 try {
-                    out.append(resolve(whole, content, values, autoVals));
+                    out.append(resolve(whole, content, values, autoVals,
+                            numericVariables, decimalPlaces));
                 } catch (ExpressionEvaluator.EvalException e) {
                     String expr = content.substring(1).trim();
                     return new RenderResult(null, "表达式「" + expr + "」" + e.getMessage());
@@ -72,15 +90,27 @@ public final class TemplateRenderer {
                                  Map<String, String> values,
                                  Map<String, String> autoVals)
             throws ExpressionEvaluator.EvalException {
+        return resolve(whole, content, values, autoVals, Set.of(),
+                NumericFormatter.DEFAULT_DECIMAL_PLACES);
+    }
+
+    public static String resolve(String whole, String content,
+                                 Map<String, String> values,
+                                 Map<String, String> autoVals,
+                                 Set<String> numericVariables,
+                                 int decimalPlaces)
+            throws ExpressionEvaluator.EvalException {
         if (TemplateParser.isExpression(content)) {
             String expr = content.substring(1).trim();
             double r = ExpressionEvaluator.evaluate(expr, values);
-            return String.format(Locale.ROOT, "%.2f", r);
+            return NumericFormatter.format(r, decimalPlaces);
         }
         if (autoVals.containsKey(content)) {
             return autoVals.get(content);
         }
         String v = values.get(content);
-        return v != null ? v : whole;
+        if (v == null) return whole;
+        return numericVariables != null && numericVariables.contains(content)
+                ? NumericFormatter.format(v, decimalPlaces) : v;
     }
 }

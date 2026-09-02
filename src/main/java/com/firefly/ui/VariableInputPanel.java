@@ -1,6 +1,7 @@
 package com.firefly.ui;
 
 import com.firefly.core.ValueNormalizer;
+import com.firefly.core.NumericFormatter;
 import com.firefly.core.VariableInputState;
 import com.firefly.core.VariableType;
 
@@ -14,18 +15,24 @@ import java.awt.event.MouseEvent;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.function.Consumer;
+import java.util.function.IntConsumer;
 
 /** 统一变量控件、类型转换、行内错误反馈、滚动与焦点定位。 */
 public final class VariableInputPanel extends JPanel {
     private final ScrollablePanel rows = new ScrollablePanel(new GridBagLayout());
     private final JScrollPane scroll = new JScrollPane(rows);
     private final JButton locateButton = new JButton("定位错误");
+    private final JButton decreaseDecimalsButton = new JButton("−");
+    private final JButton increaseDecimalsButton = new JButton("+");
+    private final JLabel decimalPlacesLabel = new JLabel();
     private final Map<String, Row> rowByName = new LinkedHashMap<>();
     private final ValidationIssueManager issues;
     private Map<String, VariableInputState> states = new LinkedHashMap<>();
     private Runnable changeListener = () -> { };
     private Runnable commitListener = () -> { };
     private Consumer<String> statusListener = text -> { };
+    private IntConsumer decimalPlacesListener = value -> { };
+    private int decimalPlaces = NumericFormatter.DEFAULT_DECIMAL_PLACES;
     private boolean rebuilding;
 
     public VariableInputPanel(ValidationIssueManager issues) {
@@ -34,6 +41,7 @@ public final class VariableInputPanel extends JPanel {
         setBorder(BorderFactory.createTitledBorder("变量填写"));
         scroll.setBorder(BorderFactory.createEmptyBorder());
         scroll.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
+        add(buildDecimalPlacesBar(), BorderLayout.NORTH);
         add(scroll);
         JPanel bottom = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 2));
         bottom.add(locateButton);
@@ -46,6 +54,42 @@ public final class VariableInputPanel extends JPanel {
         setMinimumSize(new Dimension(340, 220));
     }
 
+    private JPanel buildDecimalPlacesBar() {
+        JPanel bar = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 2));
+        bar.add(new JLabel("小数位数："));
+        configureDecimalButton(decreaseDecimalsButton, "减少小数位数");
+        configureDecimalButton(increaseDecimalsButton, "增加小数位数");
+        decimalPlacesLabel.getAccessibleContext().setAccessibleName("当前保留的小数位数");
+        decreaseDecimalsButton.addActionListener(e -> changeDecimalPlaces(-1));
+        increaseDecimalsButton.addActionListener(e -> changeDecimalPlaces(1));
+        bar.add(decreaseDecimalsButton);
+        bar.add(decimalPlacesLabel);
+        bar.add(increaseDecimalsButton);
+        refreshDecimalPlacesControls();
+        return bar;
+    }
+
+    private static void configureDecimalButton(JButton button, String accessibleName) {
+        button.setMargin(new Insets(2, 9, 2, 9));
+        button.setToolTipText(accessibleName);
+        button.getAccessibleContext().setAccessibleName(accessibleName);
+    }
+
+    private void changeDecimalPlaces(int delta) {
+        int next = NumericFormatter.clampDecimalPlaces(decimalPlaces + delta);
+        if (next == decimalPlaces) return;
+        decimalPlaces = next;
+        refreshDecimalPlacesControls();
+        decimalPlacesListener.accept(decimalPlaces);
+    }
+
+    private void refreshDecimalPlacesControls() {
+        decimalPlacesLabel.setText(decimalPlaces + " 位");
+        decimalPlacesLabel.setToolTipText("数值变量和表达式结果统一保留 " + decimalPlaces + " 位小数");
+        decreaseDecimalsButton.setEnabled(decimalPlaces > NumericFormatter.MIN_DECIMAL_PLACES);
+        increaseDecimalsButton.setEnabled(decimalPlaces < NumericFormatter.MAX_DECIMAL_PLACES);
+    }
+
     public JButton locateButton() { return locateButton; }
     public boolean hasVisibleErrorIndicator(String name) {
         Row row = rowByName.get(name);
@@ -54,6 +98,14 @@ public final class VariableInputPanel extends JPanel {
     public void setChangeListener(Runnable listener) { changeListener = listener == null ? () -> { } : listener; }
     public void setCommitListener(Runnable listener) { commitListener = listener == null ? () -> { } : listener; }
     public void setStatusListener(Consumer<String> listener) { statusListener = listener == null ? text -> { } : listener; }
+    public void setDecimalPlacesListener(IntConsumer listener) {
+        decimalPlacesListener = listener == null ? value -> { } : listener;
+    }
+    public int decimalPlaces() { return decimalPlaces; }
+    public void setDecimalPlaces(int decimalPlaces) {
+        this.decimalPlaces = NumericFormatter.clampDecimalPlaces(decimalPlaces);
+        refreshDecimalPlacesControls();
+    }
 
     public void rebuild(Map<String, VariableInputState> newStates) {
         for (String oldName : rowByName.keySet()) issues.remove(issueId(oldName));

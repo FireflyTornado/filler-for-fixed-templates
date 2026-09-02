@@ -30,6 +30,7 @@ import java.util.Enumeration;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
@@ -177,6 +178,15 @@ public final class DocxProcessor {
     public static TemplateRenderer.RenderResult render(Path src, Path dst,
                                                        Map<String, String> values,
                                                        Map<String, String> autoVals) throws IOException {
+        return render(src, dst, values, autoVals, Set.of(),
+                NumericFormatter.DEFAULT_DECIMAL_PLACES);
+    }
+
+    public static TemplateRenderer.RenderResult render(Path src, Path dst,
+                                                       Map<String, String> values,
+                                                       Map<String, String> autoVals,
+                                                       Set<String> numericVariables,
+                                                       int decimalPlaces) throws IOException {
         try {
             try (ZipFile zin = new ZipFile(src.toFile(), StandardCharsets.UTF_8);
                  ZipOutputStream zout = new ZipOutputStream(Files.newOutputStream(dst), StandardCharsets.UTF_8)) {
@@ -191,7 +201,8 @@ public final class DocxProcessor {
                         try (InputStream in = zin.getInputStream(e)) {
                             bytes = in.readAllBytes();
                         }
-                        zout.write(processPart(bytes, values, autoVals));
+                        zout.write(processPart(bytes, values, autoVals,
+                                numericVariables, decimalPlaces));
                     } else {
                         try (InputStream in = zin.getInputStream(e)) {
                             in.transferTo(zout);
@@ -213,6 +224,15 @@ public final class DocxProcessor {
                                                                Map<String, String> autoVals)
             throws IOException {
         return render(src, dst, values, autoVals);
+    }
+
+    public static TemplateRenderer.RenderResult renderUnified(Path src, Path dst,
+                                                               Map<String, String> values,
+                                                               Map<String, String> autoVals,
+                                                               Set<String> numericVariables,
+                                                               int decimalPlaces)
+            throws IOException {
+        return render(src, dst, values, autoVals, numericVariables, decimalPlaces);
     }
 
     /** 将 Word 各文本部件中的 [[变量]] 改成 {{变量}}，包括跨 run 的占位符。 */
@@ -274,7 +294,8 @@ public final class DocxProcessor {
 
     /** 处理一个部件：解析 XML → 逐段替换 → 序列化回 XML 字节。 */
     private static byte[] processPart(byte[] xml, Map<String, String> values,
-                                      Map<String, String> autoVals)
+                                      Map<String, String> autoVals,
+                                      Set<String> numericVariables, int decimalPlaces)
             throws IOException, ExpressionEvaluator.EvalException {
         Document doc;
         try {
@@ -284,7 +305,8 @@ public final class DocxProcessor {
         }
         NodeList ps = doc.getElementsByTagNameNS(W_NS, "p");
         for (int i = 0; i < ps.getLength(); i++) {
-            processParagraph((Element) ps.item(i), values, autoVals);
+            processParagraph((Element) ps.item(i), values, autoVals,
+                    numericVariables, decimalPlaces);
         }
         return serialize(doc);
     }
@@ -294,7 +316,8 @@ public final class DocxProcessor {
      * 再从后往前应用替换（前面的匹配偏移不受影响；替换值里即使出现 {{…}} 也不会被再次替换）。
      */
     private static void processParagraph(Element p, Map<String, String> values,
-                                         Map<String, String> autoVals)
+                                         Map<String, String> autoVals,
+                                         Set<String> numericVariables, int decimalPlaces)
             throws ExpressionEvaluator.EvalException {
         List<Frag> frags = new ArrayList<>();
         collectFrags(p, frags);
@@ -321,7 +344,8 @@ public final class DocxProcessor {
             matches.add(new Match(m.start(), m.end(), whole, content));
         }
         for (int i = matches.size() - 1; i >= 0; i--) {
-            applyMatch(matches.get(i), frags, values, autoVals);
+            applyMatch(matches.get(i), frags, values, autoVals,
+                    numericVariables, decimalPlaces);
         }
     }
 
@@ -331,11 +355,13 @@ public final class DocxProcessor {
 
     /** 把单个占位符替换成值。 */
     private static void applyMatch(Match match, List<Frag> frags,
-                                   Map<String, String> values, Map<String, String> autoVals)
+                                   Map<String, String> values, Map<String, String> autoVals,
+                                   Set<String> numericVariables, int decimalPlaces)
             throws ExpressionEvaluator.EvalException {
         String value;
         try {
-            value = TemplateRenderer.resolve(match.whole(), match.content(), values, autoVals);
+            value = TemplateRenderer.resolve(match.whole(), match.content(), values, autoVals,
+                    numericVariables, decimalPlaces);
         } catch (ExpressionEvaluator.EvalException e) {
             String expr = match.content().substring(1).trim();
             throw new ExpressionEvaluator.EvalException("表达式「" + expr + "」" + e.getMessage());

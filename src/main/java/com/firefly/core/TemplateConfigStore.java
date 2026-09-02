@@ -54,6 +54,16 @@ public final class TemplateConfigStore {
             if (!Files.isRegularFile(file)) return config;
             Object parsed = JsonData.parse(Files.readString(file, StandardCharsets.UTF_8));
             if (!(parsed instanceof Map<?, ?> root)) return config;
+            Object decimalPlaces = root.get("decimalPlaces");
+            if (decimalPlaces instanceof Number number) {
+                double raw = number.doubleValue();
+                int places = number.intValue();
+                if (Double.isFinite(raw) && raw == places
+                        && places >= NumericFormatter.MIN_DECIMAL_PLACES
+                        && places <= NumericFormatter.MAX_DECIMAL_PLACES) {
+                    config.setDecimalPlaces(places);
+                }
+            }
             Object variables = root.get("variables");
             if (!(variables instanceof Map<?, ?> variableMap)) return config;
             for (Map.Entry<?, ?> item : variableMap.entrySet()) {
@@ -82,6 +92,19 @@ public final class TemplateConfigStore {
     /** 合并写入，保留当前模板里暂时不存在的旧变量。 */
     public void save(String templateName, Map<String, VariableInputState> states) throws IOException {
         TemplateConfig merged = load(templateName);
+        saveMerged(merged, states);
+    }
+
+    /** 合并写入变量与当前模板的小数位数。 */
+    public void save(String templateName, Map<String, VariableInputState> states,
+                     int decimalPlaces) throws IOException {
+        TemplateConfig merged = load(templateName);
+        merged.setDecimalPlaces(decimalPlaces);
+        saveMerged(merged, states);
+    }
+
+    private void saveMerged(TemplateConfig merged, Map<String, VariableInputState> states)
+            throws IOException {
         for (VariableInputState state : states.values()) {
             merged.variables().put(state.name(), new TemplateConfig.Entry(
                     state.type(), state.value()));
@@ -91,8 +114,9 @@ public final class TemplateConfigStore {
 
     public void saveConfig(TemplateConfig config) throws IOException {
         Map<String, Object> root = new LinkedHashMap<>();
-        root.put("version", 2);
+        root.put("version", 3);
         root.put("template", config.templateName());
+        root.put("decimalPlaces", config.decimalPlaces());
         Map<String, Object> variables = new LinkedHashMap<>();
         for (Map.Entry<String, TemplateConfig.Entry> item : config.variables().entrySet()) {
             Map<String, Object> data = new LinkedHashMap<>();

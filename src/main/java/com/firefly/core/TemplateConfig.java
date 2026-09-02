@@ -20,6 +20,7 @@ public final class TemplateConfig {
 
     private final String templateName;
     private final Map<String, Entry> variables = new LinkedHashMap<>();
+    private int decimalPlaces = NumericFormatter.DEFAULT_DECIMAL_PLACES;
 
     public TemplateConfig(String templateName) {
         this.templateName = templateName;
@@ -27,4 +28,8 @@ public final class TemplateConfig {
 
     public String templateName() { return templateName; }
     public Map<String, Entry> variables() { return variables; }
+    public int decimalPlaces() { return decimalPlaces; }
+    public void setDecimalPlaces(int decimalPlaces) {
+        this.decimalPlaces = NumericFormatter.clampDecimalPlaces(decimalPlaces);
+    }
 }
