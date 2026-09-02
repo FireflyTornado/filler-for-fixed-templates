@@ -34,6 +34,7 @@ public final class TemplateConstants {
                     "上月年", "上月年月",
                     "下月年", "下月年月",
                     "本月", "上月", "下月",
+                    "本月天数",
                     "本年", "上年", "下年",
                     "本月月首", "本月月末");
 
@@ -74,6 +75,7 @@ public final class TemplateConstants {
         map.put("本月", month(selectedDay));
         map.put("上月", month(previousMonth));
         map.put("下月", month(nextMonth));
+        map.put("本月天数", Integer.toString(selectedDay.lengthOfMonth()));
         map.put("本年", year(selectedDay));
         map.put("上年", year(selectedDay.minusYears(1)));
         map.put("下年", year(selectedDay.plusYears(1)));

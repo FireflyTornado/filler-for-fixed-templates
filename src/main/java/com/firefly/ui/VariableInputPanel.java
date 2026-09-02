@@ -10,6 +10,8 @@ import javax.swing.border.Border;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import java.awt.*;
+import java.awt.event.ActionEvent;
+import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.util.LinkedHashMap;
@@ -165,6 +167,7 @@ public final class VariableInputPanel extends JPanel {
         type.getAccessibleContext().setAccessibleName("变量“" + state.name() + "”的类型");
         expand.getAccessibleContext().setAccessibleName("编辑变量“" + state.name() + "”的多行文本");
         configureValueField(row);
+        installValueFieldTraversal(row);
         installSessionValueMenu(row, name);
 
         gc.gridx = 0; gc.weightx = 0; gc.fill = GridBagConstraints.NONE; rows.add(name, gc);
@@ -186,6 +189,34 @@ public final class VariableInputPanel extends JPanel {
                 if (e.getClickCount() == 2 && row.state.type() == VariableType.MULTILINE_TEXT) editMultiline(row);
             }
         });
+    }
+
+    /** Tab 从当前变量值直接前进到下一变量值；最后一行继续使用系统焦点顺序。 */
+    private void installValueFieldTraversal(Row row) {
+        String actionName = "focus-next-variable-value";
+        row.field.getInputMap(JComponent.WHEN_FOCUSED)
+                .put(KeyStroke.getKeyStroke(KeyEvent.VK_TAB, 0), actionName);
+        row.field.getActionMap().put(actionName, new AbstractAction() {
+            @Override public void actionPerformed(ActionEvent e) {
+                focusNextValueField(row);
+            }
+        });
+    }
+
+    private void focusNextValueField(Row current) {
+        Row next = null;
+        for (Row candidate : rowByName.values()) {
+            if (candidate.order == current.order + 1) {
+                next = candidate;
+                break;
+            }
+        }
+        if (next == null) {
+            current.field.transferFocus();
+            return;
+        }
+        scrollToVariable(next.state.name());
+        next.field.requestFocusInWindow();
     }
 
     private void installSessionValueMenu(Row row, JLabel name) {

@@ -153,6 +153,7 @@ public final class TemplateHelpDialog extends JDialog {
                 + "• 短字符串原样替换。\n"
                 + "• 多行文本保留换行。\n"
                 + "• 表达式引用的变量会锁定为数值。\n"
+                + "• 在变量值输入框按 Tab 可跳到下一变量值。\n"
                 + "• 同名变量只需填写一次。";
     }
 
@@ -191,6 +192,7 @@ public final class TemplateHelpDialog extends JDialog {
             return "对应日期的日（X日）";
         if (name.equals("本月") || name.equals("上月") || name.equals("下月"))
             return "对应月份（X月）";
+        if (name.equals("本月天数")) return "基准月份的天数（28 / 29 / 30 / 31）";
         if (name.endsWith("年") || name.equals("本年") || name.equals("上年") || name.equals("下年")) return "对应年份（X年）";
         return "由基准日期自动计算";
     }

@@ -7,7 +7,7 @@ A lightweight Java Swing desktop tool with a unified variable system for filling
 ## Features
 
 - **Split-pane workspace** → templates and results stay on the left, while the base date and unified variable form stay on the right; both dividers are draggable and their positions are restored on the next launch
-- **Unified variable input** → `{{variable}}` is the recommended syntax, and each variable can be Numeric, Short Text, or Multi-line Text; a blank numeric value is treated as 0
+- **Unified variable input** → `{{variable}}` is the recommended syntax, and each variable can be Numeric, Short Text, or Multi-line Text; a blank numeric value is treated as 0, and `Tab` in a value field moves directly to the next variable value
 - **Legacy syntax migration** → when `[[variable]]` is found, it can be backed up and converted to `{{variable}}` in one click
 - **Compact multi-line editing** → multi-line values use a one-line preview in the main window and open in a modal “Expand…” editor
 - **Session draft protection** → Numeric, Short Text, and Multi-line Text keep independent values for the current template editing session; only the active type and value persist across sessions
@@ -38,7 +38,7 @@ A lightweight Java Swing desktop tool with a unified variable system for filling
 
 **Fill variables**: every variable name appears only once in the right-hand form. Ordinary variables can switch among all three types; expression variables remain Numeric. Use `−` / `+` at the top to adjust decimal places for the current template. Multi-line edits are committed only when the dialog is confirmed.
 
-**Keyboard shortcuts**: `Ctrl+Enter` generates the result, `Ctrl+S` saves a text template, `F1` opens help, and `F4` cycles through input errors. Auxiliary dialogs close with `Esc`.
+**Keyboard shortcuts**: `Tab` in a variable value field moves to the next variable value; `Ctrl+Enter` generates the result, `Ctrl+S` saves a text template, `F1` opens help, and `F4` cycles through input errors. Auxiliary dialogs close with `Esc`.
 
 **Use a Word template**: use `{{variable}}` in Word. A `.docx` template is shown as a read-only preview. Export the generated document with “Save Result to File.”
 
@@ -110,6 +110,7 @@ All date variables are derived from the base date selected in the UI:
 | `{{上月年}}` `{{上月年月}}` | Previous month |
 | `{{下月年}}` `{{下月年月}}` | Next month |
 | `{{本月}}` `{{上月}}` `{{下月}}` | Month only, such as `1月` or `12月` |
+| `{{本月天数}}` | Number of days in the base month, output as `28`, `29`, `30`, or `31` |
 | `{{上年}}` `{{本年}}` `{{下年}}` | Relative years |
 | `{{本月月首}}` `{{本月月末}}` | First or last day of the base month, month-day only, such as `2月1日` or `2月29日` |
 
