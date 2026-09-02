@@ -47,7 +47,8 @@ public final class TemplateToolApp extends JFrame {
     private DatePickerPanel datePicker;
     private VariableInputPanel variablePanel;
     private ResultPanel resultPanel;
-    private JButton newBtn, saveTplBtn, generateBtn, copyBtn, saveResultBtn, helpBtn, fontScaleBtn;
+    private JButton newBtn, saveTplBtn, generateBtn, copyBtn, saveResultBtn, helpBtn;
+    private JButton refreshTemplateBtn, fontScaleBtn;
     private TitledBorder templateBorder;
     private JPanel templatePanel;
     private JSplitPane mainSplit, previewResultSplit;
@@ -113,15 +114,24 @@ public final class TemplateToolApp extends JFrame {
         mainSplit.setContinuousLayout(true);
         mainSplit.setOneTouchExpandable(true);
         root.add(mainSplit, BorderLayout.CENTER);
-        statusLabel = new JLabel(" ");
-        statusLabel.setBorder(BorderFactory.createCompoundBorder(
+        JPanel statusBar = new JPanel(new BorderLayout(6, 0));
+        statusBar.setBorder(BorderFactory.createCompoundBorder(
                 BorderFactory.createMatteBorder(1, 0, 0, 0, Color.LIGHT_GRAY),
-                BorderFactory.createEmptyBorder(4, 8, 2, 8)));
+                BorderFactory.createEmptyBorder(3, 8, 2, 2)));
+        statusLabel = new JLabel(" ");
         statusLabel.setMinimumSize(new Dimension(0, statusLabel.getPreferredSize().height));
         statusLabel.addComponentListener(new java.awt.event.ComponentAdapter() {
             @Override public void componentResized(java.awt.event.ComponentEvent e) { refreshStatusLabel(); }
         });
-        root.add(statusLabel, BorderLayout.SOUTH);
+        statusBar.add(statusLabel, BorderLayout.CENTER);
+        fontScaleBtn = new JButton(fontScaleButtonText());
+        fontScaleBtn.setMnemonic('Z');
+        fontScaleBtn.setMargin(new Insets(1, 7, 1, 7));
+        fontScaleBtn.setToolTipText("调节界面字号（Ctrl+加号/减号，Ctrl+0 跟随系统）");
+        fontScaleBtn.getAccessibleContext().setAccessibleName("调节界面字号");
+        fontScaleBtn.addActionListener(e -> showFontScaleMenu());
+        statusBar.add(fontScaleBtn, BorderLayout.EAST);
+        root.add(statusBar, BorderLayout.SOUTH);
     }
 
     private JPanel buildLeftPane() {
@@ -172,22 +182,22 @@ public final class TemplateToolApp extends JFrame {
         JButton choose = new JButton("选择模板文件…"), open = new JButton("打开文件夹");
         newBtn = new JButton("新建模板"); saveTplBtn = new JButton("保存模板");
         helpBtn = new JButton("帮助");
-        fontScaleBtn = new JButton("字号 ▾");
-        fontScaleBtn.setMnemonic('Z');
-        fontScaleBtn.setToolTipText("调节界面字号（Ctrl+加号/减号，Ctrl+0 跟随系统）");
-        fontScaleBtn.getAccessibleContext().setAccessibleName("调节界面字号");
+        refreshTemplateBtn = new JButton("刷新模板");
+        refreshTemplateBtn.setMnemonic('R');
+        refreshTemplateBtn.setToolTipText("重新读取当前模板文件中的内容");
+        refreshTemplateBtn.getAccessibleContext().setAccessibleName("从磁盘刷新当前模板");
         helpBtn.setMnemonic('H');
         helpBtn.setToolTipText("模板变量语法和当前模板变量（F1）");
         helpBtn.getAccessibleContext().setAccessibleName("打开模板变量帮助");
         buttons.add(choose); buttons.add(newBtn); buttons.add(saveTplBtn);
-        buttons.add(open); buttons.add(fontScaleBtn); buttons.add(helpBtn);
+        buttons.add(open); buttons.add(refreshTemplateBtn); buttons.add(helpBtn);
         toolbar.add(buttons, BorderLayout.SOUTH);
         choose.addActionListener(e -> chooseTemplate());
         newBtn.addActionListener(e -> newTemplate());
         saveTplBtn.addActionListener(e -> saveTemplate());
         open.addActionListener(e -> openTemplatesFolder());
+        refreshTemplateBtn.addActionListener(e -> refreshCurrentTemplate());
         helpBtn.addActionListener(e -> showHelp());
-        fontScaleBtn.addActionListener(e -> showFontScaleMenu());
         return toolbar;
     }
 
@@ -339,15 +349,15 @@ public final class TemplateToolApp extends JFrame {
         if (helpDialog != null) helpDialog.refreshIfVisible();
     }
 
-    private void loadTemplate(String name) {
+    private boolean loadTemplate(String name) {
         boolean word = DocxProcessor.isDocxName(name);
         String text;
         try {
             text = word ? DocxProcessor.extractText(templateStore.templateFile(name))
                     : templateStore.readTemplate(name);
-        } catch (IOException e) { showError("无法读取模板文件：\n" + e, "读取失败"); return; }
+        } catch (IOException e) { showError("无法读取模板文件：\n" + e, "读取失败"); return false; }
         templateConfigSaveTimer.stop();
-        if (!currentTemplateName.isEmpty() && !saveCurrentTemplateConfig(true)) return;
+        if (!currentTemplateName.isEmpty() && !saveCurrentTemplateConfig(true)) return false;
         sessionVariableStates.clear();
         currentTemplateName = name; currentTemplate = text; lastDiskContent = text;
         issueManager.clear();
@@ -376,6 +386,7 @@ public final class TemplateToolApp extends JFrame {
                 promptLegacyTemplateMigration(name, word, displayedText, legacy);
             });
         }
+        return true;
     }
 
     private void promptLegacyTemplateMigration(String name, boolean word, String originalText,
@@ -491,7 +502,10 @@ public final class TemplateToolApp extends JFrame {
         if (ext.isEmpty()) name += ".txt";
         else if (!".txt".equalsIgnoreCase(ext)) { showWarning("界面内新建仅支持 .txt 模板；Word 模板请从外部导入。", "文件类型不支持"); return; }
         String existing = findNameIgnoreCase(templateStore.listTemplateNames(), name);
-        if (existing != null) { loadTemplate(existing); setStatus("该模板已存在，已为你打开：" + existing); return; }
+        if (existing != null) {
+            if (loadTemplate(existing)) setStatus("该模板已存在，已为你打开：" + existing);
+            return;
+        }
         templateConfigSaveTimer.stop();
         if (!saveCurrentTemplateConfig(true)) return;
         sessionVariableStates.clear();
@@ -732,6 +746,29 @@ public final class TemplateToolApp extends JFrame {
         }
     }
 
+    private void refreshCurrentTemplate() {
+        if (currentTemplateName.isEmpty()) {
+            showWarning("当前没有可刷新的模板。", "无法刷新");
+            return;
+        }
+        Path templateFile = templateStore.templateFile(currentTemplateName);
+        if (!Files.isRegularFile(templateFile)) {
+            showWarning("当前模板文件尚未保存或已被移除：\n" + templateFile,
+                    "无法刷新");
+            return;
+        }
+        if (hasUnsavedTemplateChanges()) {
+            int choice = JOptionPane.showConfirmDialog(this,
+                    "刷新将放弃界面中尚未保存的模板修改，并重新读取磁盘文件。\n\n是否继续？",
+                    "刷新模板", JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
+            if (choice != JOptionPane.OK_OPTION) return;
+        }
+        String name = currentTemplateName;
+        if (loadTemplate(name)) {
+            setStatus("已从磁盘刷新模板：" + name);
+        }
+    }
+
     private static boolean isValidTemplateName(String name) {
         if (name.isEmpty() || name.startsWith(".") || name.equals("..")) return false;
         for (char c : name.toCharArray()) if ("\\/:*?\"<>|".indexOf(c) >= 0) return false;
@@ -767,9 +804,12 @@ public final class TemplateToolApp extends JFrame {
     private void increaseFontScale() { setFontScalePreset(fontScalePreset.larger()); }
     private void decreaseFontScale() { setFontScalePreset(fontScalePreset.smaller()); }
 
+    private String fontScaleButtonText() { return "字号：" + fontScalePreset + " ▾"; }
+
     private void setFontScalePreset(FontScalePreset preset) {
         if (preset == null || preset == fontScalePreset) return;
         fontScalePreset = preset;
+        fontScaleBtn.setText(fontScaleButtonText());
         appConfig.setFontScale(preset.scale());
         UiFontManager.applyScale(preset.scale());
         UiFontManager.refreshOpenWindows();

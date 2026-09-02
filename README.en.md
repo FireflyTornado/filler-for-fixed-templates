@@ -22,6 +22,7 @@ A lightweight Java Swing desktop tool with a unified variable system for filling
 - **Modeless help window** → includes syntax guidance, every built-in date variable, and a live current-template variable inventory without blocking the main window
 - **Multi-template management** → template files with any names are stored in the `Templates/` folder; you can switch via "Choose Template File…", "New Template", save changes back to the corresponding file with "Save Template", and the last-used template is remembered and restored on next startup
 - **Edit templates on the fly** → edit and save directly in the UI, or click "Open Folder" to edit with an external editor
+- **Manual template refresh** → reload the current template after editing it externally, with a warning before discarding unsaved in-app changes
 - **Word template support** → replace variables in the body, tables, headers/footers, footnotes/endnotes, comments, and text boxes while preserving character and paragraph formatting
 
 ## Quick Start
