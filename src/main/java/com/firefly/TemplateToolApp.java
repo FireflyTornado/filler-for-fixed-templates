@@ -82,6 +82,7 @@ public final class TemplateToolApp extends JFrame {
     private static final String TASK_INITIALIZE = "initialize";
     private static final String TASK_LOAD_TEMPLATE = "load-template";
     private static final String TASK_SAVE_TEMPLATE = "save-template";
+    private static final String TASK_RENAME_TEMPLATE = "rename-template";
     private static final String TASK_MIGRATE_TEMPLATE = "migrate-template";
     private static final String TASK_GENERATE = "generate-result";
     private static final String TASK_EXPORT = "export-result";
@@ -206,6 +207,14 @@ public final class TemplateToolApp extends JFrame {
         info.add(new JLabel("模板文件："));
         templateNameLabel = new JLabel("—");
         templateNameLabel.setForeground(Color.GRAY);
+        templateNameLabel.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        templateNameLabel.setToolTipText("点击重命名当前模板（配置文件会同步重命名）");
+        templateNameLabel.getAccessibleContext().setAccessibleName("当前模板文件名，点击可重命名");
+        templateNameLabel.addMouseListener(new java.awt.event.MouseAdapter() {
+            @Override public void mouseClicked(java.awt.event.MouseEvent e) {
+                if (SwingUtilities.isLeftMouseButton(e)) promptRenameCurrentTemplate();
+            }
+        });
         info.add(templateNameLabel);
         toolbar.add(info, BorderLayout.NORTH);
         JPanel buttons = new JPanel(new GridLayout(0, 3, 5, 4));
@@ -573,18 +582,19 @@ public final class TemplateToolApp extends JFrame {
         if (chooser.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) return;
         File selected = chooser.getSelectedFile();
         if (!isSupportedTemplateName(selected.getName())) { showWarning("仅支持 .txt 和 .docx 模板。", "文件类型不支持"); return; }
-        Path parent = selected.getParentFile().toPath().toAbsolutePath().normalize();
+        Path selectedPath = selected.toPath().toAbsolutePath().normalize();
+        Path templatesRoot = templateStore.templatesDir().toAbsolutePath().normalize();
         File target = selected;
-        if (!parent.equals(templateStore.templatesDir().toAbsolutePath().normalize())) {
+        if (!selectedPath.startsWith(templatesRoot)) {
             target = chooseImportTarget(selected, dir);
             if (target == null) return;
         }
         File finalTarget = target;
         confirmUnsavedThen("继续", () -> {
             if (!confirmCancelGeneration("切换模板")) return;
-            if (selected.toPath().toAbsolutePath().normalize()
-                    .equals(finalTarget.toPath().toAbsolutePath().normalize())) {
-                loadTemplateAsync(finalTarget.getName(), null);
+            Path finalPath = finalTarget.toPath().toAbsolutePath().normalize();
+            if (selectedPath.equals(finalPath)) {
+                loadTemplateAsync(templateStore.templateName(finalPath), null);
             } else {
                 importTemplateAsync(selected.toPath(), finalTarget.toPath());
             }
@@ -597,7 +607,7 @@ public final class TemplateToolApp extends JFrame {
                 progress -> {
                     copyWithProgress(source, target, progress,
                             FileOperationText.IMPORT_TEMPLATE.inProgress());
-                    return target.getFileName().toString();
+                    return templateStore.templateName(target);
                 }, name -> loadTemplateAsync(name, null), error ->
                         showError("无法导入模板文件：\n" + error, "导入失败"),
                 () -> setStatus("模板导入已取消。"));
@@ -605,6 +615,80 @@ public final class TemplateToolApp extends JFrame {
 
     private void newTemplate() {
         confirmUnsavedThen("继续", this::promptNewTemplateName);
+    }
+
+    private void promptRenameCurrentTemplate() {
+        if (currentTemplateName.isEmpty()) return;
+        String oldName = currentTemplateName;
+        String oldFileName = templateStore.templateFile(oldName).getFileName().toString();
+        String oldExtension = extensionOf(oldFileName);
+        String oldBaseName = oldFileName.substring(0, oldFileName.length() - oldExtension.length());
+        String entered = (String) JOptionPane.showInputDialog(this,
+                "请输入新的模板名称（无需输入扩展名）：\n"
+                        + "文件仍保留在当前子文件夹中，扩展名 " + oldExtension + " 会自动沿用。",
+                "重命名模板", JOptionPane.PLAIN_MESSAGE, null, null, oldBaseName);
+        if (entered == null) return;
+        String newBaseName = entered.trim();
+        // 输入框只编辑主文件名；即使用户习惯性输入支持的扩展名，也会先移除再沿用原扩展名。
+        if (isSupportedTemplateName(newBaseName)) {
+            String enteredExtension = extensionOf(newBaseName);
+            newBaseName = newBaseName.substring(0,
+                    newBaseName.length() - enteredExtension.length()).trim();
+        }
+        if (!isValidTemplateName(newBaseName)) {
+            showWarning("文件名不能为空，且不能包含 \\ / : * ? \" < > | 等字符，也不能以 . 开头。",
+                    "文件名不合法");
+            return;
+        }
+        String newFileName = newBaseName + oldExtension;
+        int slash = oldName.lastIndexOf('/');
+        String newName = slash < 0 ? newFileName : oldName.substring(0, slash + 1) + newFileName;
+        if (newName.equals(oldName)) return;
+        String existing = findNameIgnoreCase(templateStore.listTemplateNames(), newName);
+        if (existing != null && !existing.equals(oldName)) {
+            showWarning("当前文件夹中已存在同名模板：\n" + existing, "无法重命名");
+            return;
+        }
+        if (templateConfigStore.exists(newName) && !newName.equalsIgnoreCase(oldName)) {
+            showWarning("对应的新配置文件已存在，未执行重命名。", "无法重命名");
+            return;
+        }
+        if (!confirmCancelGeneration("重命名模板") || !saveCurrentTemplateConfig(true)) return;
+        renameCurrentTemplateAsync(oldName, newName);
+    }
+
+    private record RenameTemplateResult(String oldName, String newName) { }
+
+    private void renameCurrentTemplateAsync(String oldName, String newName) {
+        fileTasks.submit(TASK_RENAME_TEMPLATE, "重命名模板",
+                FileTaskManager.LockScope.TEMPLATE, false,
+                progress -> {
+                    progress.update("正在重命名模板", 20, 100);
+                    boolean templateMoved = Files.isRegularFile(templateStore.templateFile(oldName));
+                    if (templateMoved) templateStore.renameTemplate(oldName, newName);
+                    try {
+                        progress.update("正在同步重命名配置", 70, 100);
+                        templateConfigStore.rename(oldName, newName);
+                    } catch (IOException | RuntimeException configError) {
+                        if (templateMoved) {
+                            try { templateStore.renameTemplate(newName, oldName); }
+                            catch (Exception rollbackError) { configError.addSuppressed(rollbackError); }
+                        }
+                        throw configError;
+                    }
+                    progress.update("重命名完成", 100, 100);
+                    return new RenameTemplateResult(oldName, newName);
+                }, renamed -> {
+                    if (!renamed.oldName().equals(currentTemplateName)) return;
+                    currentTemplateName = renamed.newName();
+                    Set<String> checked = checkedTemplateVariables.remove(renamed.oldName());
+                    if (checked != null) checkedTemplateVariables.put(renamed.newName(), checked);
+                    persistedTemplateConfig = templateConfigStore.load(renamed.newName());
+                    rememberTemplate(renamed.newName());
+                    updateDirtyIndicator();
+                    setStatus("模板已重命名为：" + renamed.newName());
+                }, error -> showError("无法重命名模板及其配置文件：\n" + error, "重命名失败"),
+                () -> setStatus("模板重命名已取消。"));
     }
 
     private void promptNewTemplateName() {
@@ -846,6 +930,7 @@ public final class TemplateToolApp extends JFrame {
     private void updateDirtyIndicator() {
         boolean dirty = hasUnsavedTemplateChanges();
         templateNameLabel.setText((currentTemplateName.isEmpty() ? "—" : currentTemplateName) + (dirty ? " *" : ""));
+        templateNameLabel.setEnabled(!currentTemplateName.isEmpty());
         setTitle("模板填充工具" + (dirty ? " *" : ""));
     }
 

@@ -15,14 +15,15 @@ A lightweight Java Swing desktop tool with a unified variable system for filling
 - **Unified decimal places** → use `−` / `+` in the variable form to keep 0–10 decimal places for the current template; numeric replacements and expression results share the same setting, defaulting to two places
 - **Calendar base date** → all built-in date variables use the calendar selection as their base; every launch starts with the current system date, and you can type `yyyy-MM-dd` or use the popup calendar to change it
 - **Complete date derivation** → supports day-only, month-only, year-month, full-date, and year output for relative days, months, and years, plus the first/last day of the base month, with automatic month, year, and leap-year handling
-- **Per-template configuration** → application state is stored in `config.json`, while each template keeps its own values, selected types, and decimal places in `Config/<full-template-name>.json`; on exit, you can confirm cleanup of unused variables in templates checked during the current session
+- **Per-template configuration** → application state is stored in `config.json`, while each template keeps its own values, selected types, and decimal places under the mirrored path `Config/<template-relative-path>.json`; on exit, you can confirm cleanup of unused variables in templates checked during the current session
 - **Safe legacy migration** → existing `last_values.json` data is migrated once in read-only mode and the legacy file is never modified or deleted; new configuration writes use temporary files and atomic replacement where supported
 - **Generated-result protection** → changing the template, variable value, variable type, or base date immediately invalidates the old result and disables copying or saving it
 - **General background file tasks** → template initialization, loading, importing, saving, refreshing, and migration, plus result generation and export, run in the background; a fixed status-bar area shows the current phase, progress, and an always-present Cancel button, while operation-based status text stays consistent across TXT and DOCX files
 - **Safe template loading state** → switching or refreshing handles unsaved edits first, then locks the template workspace while progress is shown; success swaps the complete session at once, while failure or cancellation restores the previous template
 - **Error navigation and accessibility** → numeric and date errors update live with non-color indicators; use “Locate Error” or `F4` to cycle through them, plus `F1` for help, `Ctrl+Enter` to generate, and `Ctrl+S` to save the template
 - **Modeless help window** → includes syntax guidance, a calculation guide, every built-in date variable, and a live current-template variable inventory without blocking the main window
-- **Multi-template management** → template files with any names are stored in the `Templates/` folder; you can switch via "Choose Template File…", "New Template", save changes back to the corresponding file with "Save Template", and the last-used template is remembered and restored on next startup
+- **Multi-template management** → template files with any names can be stored at any depth below `Templates/`; you can switch via "Choose Template File…", "New Template", save changes back to the corresponding file with "Save Template", and the last-used template is remembered and restored on next startup
+- **Synchronized rename** → click the template file name at the top of the window to rename it in place; its matching `Config` file is renamed at the same time
 - **Edit templates on the fly** → edit and save directly in the UI, or click "Open Folder" to edit with an external editor
 - **Manual template refresh** → reload the current template after editing it externally, with a warning before discarding unsaved in-app changes
 - **Word template support** → replace variables in the body, tables, headers/footers, footnotes/endnotes, comments, and text boxes while preserving character and paragraph formatting
@@ -36,7 +37,42 @@ A lightweight Java Swing desktop tool with a unified variable system for filling
 1. Double-click `launcher.bat`
 2. Or run `java -jar TemplateTool.jar` in a command line
 
-**Edit templates**: templates are stored in the `Templates/` folder and may be `.txt` or `.docx`. Text templates can be edited and saved directly in the app. Word templates are read-only in the app and must be edited in Word or another external editor, then refreshed or reopened. "New Template" creates `.txt` files only, while "Open Folder" lets you manage every template file directly.
+**Edit templates**: templates are stored in `Templates/` or any nested folder and may be `.txt` or `.docx`. Text templates can be edited and saved directly in the app. Word templates are read-only in the app and must be edited in Word or another external editor, then refreshed or reopened. Clicking the template name at the top renames it in place and synchronizes its configuration. The rename field hides the extension and automatically preserves the existing `.txt` or `.docx`. "New Template" creates `.txt` files in the root `Templates` folder only.
+
+### Organizing Templates in File Explorer
+
+The app does not currently provide commands for moving templates, creating folders, bulk copying, or deleting files. Use **Open Folder**, or open the program's `Templates` directory directly in File Explorer. Exit the app before moving, bulk-renaming, or deleting files so it cannot save the current template or configuration back to an old path.
+
+#### Naming and path rules
+
+- Only `.txt` and `.docx` templates are supported; extension matching is case-insensitive. Other files are not included in template scans.
+- Templates may be stored at any depth under `Templates`. Names must be unique within one folder, while separate folders may contain templates with the same file name.
+- Do not begin a file or folder name with `.` because paths containing such a segment are treated as hidden and ignored.
+- For Windows compatibility, names must not contain `\ / : * ? " < > |`, be `.` or `..`, or end in a space or period. Avoid reserved names such as `CON`, `PRN`, `AUX`, `NUL`, `COM1`–`COM9`, and `LPT1`–`LPT9`.
+- A template is identified by its path relative to `Templates`. For example, `Contracts/Purchasing/Quote.txt` and `Contracts/Sales/Quote.txt` are independent templates.
+- Clicking the template name in the app only renames it within its current folder. The field does not show or require the extension; the existing `.txt` or `.docx` is retained automatically.
+
+#### Template-to-configuration mapping
+
+Saved variable values, variable types, and decimal places use a mirrored path below `Config`. The configuration name is the complete template file name followed by `.json`:
+
+| Template | Matching configuration |
+| --- | --- |
+| `Templates/Quote.txt` | `Config/Quote.txt.json` |
+| `Templates/Contracts/Purchasing/Quote.txt` | `Config/Contracts/Purchasing/Quote.txt.json` |
+| `Templates/Word/Notice.docx` | `Config/Word/Notice.docx.json` |
+
+A configuration file is optional. If none exists, the app uses defaults and creates the required `Config` folders and JSON file when settings are saved. Do not edit JSON contents manually or move the application-level `config.json` into `Config`.
+
+#### Common File Explorer operations
+
+- **Move**: move the template below `Templates`. To retain its values and settings, move its configuration to the exactly matching relative folder below `Config` as well.
+- **Rename externally**: keep the `.txt` or `.docx` extension, then rename the matching configuration to the template's new complete file name plus `.json`. Do this while the app is closed.
+- **Copy**: copying only the template creates an independent template with default settings. Copy and rename its configuration too if the clone should inherit existing values and settings.
+- **Delete**: delete the matching configuration as well to remove all saved values. If the configuration is retained, a future template created at that same relative path will reuse it.
+- **Move a category folder**: move the corresponding category folders under both `Templates` and `Config` to preserve every mapping inside that category.
+
+After organizing files, open the target with **Choose Template File…**. If the path remembered at startup no longer exists, select the template once at its new location; the app then remembers the new relative path.
 
 **Fill variables**: every variable name appears only once in the right-hand form. Ordinary variables can switch among all three types; expression variables remain Numeric. Use `−` / `+` at the top to adjust decimal places for the current template. Multi-line edits are committed only when the dialog is confirmed.
 

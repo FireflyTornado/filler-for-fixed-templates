@@ -9,6 +9,7 @@ import com.firefly.core.ExpressionEvaluator;
 import com.firefly.core.LegacyTemplateMigrator;
 import com.firefly.core.TemplateParser;
 import com.firefly.core.TemplateRenderer;
+import com.firefly.core.TemplateStore;
 import com.firefly.core.VariableInputState;
 import com.firefly.core.VariableType;
 import com.firefly.ui.FontScalePreset;
@@ -40,6 +41,7 @@ public final class TemplateFeatureTests {
         testFileTaskManagerRunsOffTheUiThread();
         testPresetBoundaries();
         testSessionDrafts();
+        testNestedTemplateAndConfigStorage();
         testTemplateConfigWritesOnlyCurrentValue();
         testDecimalPlacesConfigRoundTripAndFallback();
         testLegacyDraftMigration();
@@ -172,6 +174,38 @@ public final class TemplateFeatureTests {
                 "active state persisted");
         assertTrue(!json.contains("drafts") && !json.contains("valuesByType") && !json.contains("原文"),
                 "other session values are not persisted");
+    }
+
+    private static void testNestedTemplateAndConfigStorage() throws Exception {
+        Path dir = Files.createTempDirectory("nested-template-storage");
+        TemplateStore templates = new TemplateStore(dir);
+        TemplateConfigStore configs = new TemplateConfigStore(dir);
+        templates.writeTemplate("合同/采购/报价.txt", "金额：{{金额}}");
+        templates.writeTemplate("合同/销售/报价.txt", "客户：{{客户}}");
+        configs.save("合同/采购/报价.txt", Map.of("金额",
+                new VariableInputState("金额", VariableType.NUMBER, "12", false)));
+
+        assertTrue(templates.listTemplateNames().equals(java.util.List.of(
+                "合同/采购/报价.txt", "合同/销售/报价.txt")),
+                "nested templates are recursively listed by portable relative path");
+        assertTrue(Files.isRegularFile(dir.resolve("Config/合同/采购/报价.txt.json")),
+                "template config mirrors nested template folders");
+
+        templates.renameTemplate("合同/采购/报价.txt", "合同/采购/新报价.txt");
+        configs.rename("合同/采购/报价.txt", "合同/采购/新报价.txt");
+        assertTrue(Files.isRegularFile(dir.resolve("Templates/合同/采购/新报价.txt"))
+                        && !Files.exists(dir.resolve("Templates/合同/采购/报价.txt")),
+                "nested template rename stays in its folder");
+        assertEquals("12", configs.load("合同/采购/新报价.txt")
+                .variables().get("金额").value(), "renamed config keeps values");
+        assertTrue(Files.readString(configs.configFileForTemplate("合同/采购/新报价.txt"))
+                        .contains("\"template\": \"合同/采购/新报价.txt\""),
+                "renamed config updates its recorded template path");
+
+        boolean rejected = false;
+        try { templates.templateFile("../outside.txt"); }
+        catch (IllegalArgumentException expected) { rejected = true; }
+        assertTrue(rejected, "template traversal is rejected");
     }
 
     private static void testDecimalPlacesConfigRoundTripAndFallback() throws Exception {

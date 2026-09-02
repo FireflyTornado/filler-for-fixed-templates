@@ -9,7 +9,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-/** Config/模板完整文件名.json 的安全路径、容错读取与原子写入。 */
+/** Config/模板相对路径.json 的安全路径、容错读取与原子写入；目录结构与 Templates 镜像。 */
 public final class TemplateConfigStore {
     /** 退出前确认使用的清理清单；只包含已检查模板中不再使用的变量。 */
     public record CleanupReport(Map<String, List<String>> unusedVariables) {
@@ -41,18 +41,22 @@ public final class TemplateConfigStore {
         if (templateName == null || templateName.isBlank()) {
             throw new IllegalArgumentException("模板文件名不能为空");
         }
-        if (templateName.indexOf('/') >= 0 || templateName.indexOf('\\') >= 0
-                || templateName.contains("..")) {
-            throw new IllegalArgumentException("模板文件名不能包含路径");
+        String portable = templateName.replace('\\', '/');
+        if (portable.startsWith("/") || portable.endsWith("/") || portable.contains("//")) {
+            throw new IllegalArgumentException("模板路径不合法");
         }
-        Path plain = Path.of(templateName);
-        if (plain.isAbsolute() || plain.getNameCount() != 1
-                || !plain.getFileName().toString().equals(templateName)
-                || templateName.equals(".") || templateName.equals("..")) {
-            throw new IllegalArgumentException("模板文件名不能包含路径");
+        Path plain = Path.of(portable.replace('/', java.io.File.separatorChar));
+        if (plain.isAbsolute() || plain.getNameCount() == 0) {
+            throw new IllegalArgumentException("模板路径必须是相对路径");
         }
-        Path result = configDir.resolve(templateName + ".json").normalize();
-        if (!result.getParent().equals(configDir)) {
+        for (Path part : plain) {
+            String text = part.toString();
+            if (text.isBlank() || text.equals(".") || text.equals("..")) {
+                throw new IllegalArgumentException("模板路径不能包含 . 或 ..");
+            }
+        }
+        Path result = configDir.resolve(plain.toString() + ".json").normalize();
+        if (!result.startsWith(configDir) || result.equals(configDir)) {
             throw new IllegalArgumentException("配置路径超出 Config 文件夹");
         }
         return result;
@@ -172,6 +176,49 @@ public final class TemplateConfigStore {
         }
         root.put("variables", variables);
         AtomicConfigWriter.write(configFileForTemplate(config.templateName()), JsonData.stringify(root));
+    }
+
+    /** 随模板重命名其配置文件；没有配置文件时无需创建空配置。 */
+    public void rename(String oldTemplateName, String newTemplateName) throws IOException {
+        Path source = configFileForTemplate(oldTemplateName);
+        Path target = configFileForTemplate(newTemplateName);
+        if (source.equals(target) || !Files.exists(source)) return;
+        boolean sameFile = Files.exists(target) && Files.isSameFile(source, target);
+        if (Files.exists(target) && !sameFile) throw new IOException("目标模板配置已存在：" + target);
+        Files.createDirectories(target.getParent());
+        try {
+            if (sameFile) moveChangingOnlyCase(source, target);
+            else move(source, target);
+            // 同步 JSON 内记录的模板相对路径；读取时仍采用新名称作为权威值。
+            saveConfig(load(newTemplateName));
+        } catch (IOException error) {
+            if (Files.exists(target) && !Files.exists(source)) {
+                try { move(target, source); }
+                catch (IOException rollbackError) { error.addSuppressed(rollbackError); }
+            }
+            throw error;
+        }
+    }
+
+    private static void move(Path source, Path target) throws IOException {
+        try {
+            Files.move(source, target, java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+        } catch (java.nio.file.AtomicMoveNotSupportedException e) {
+            Files.move(source, target);
+        }
+    }
+
+    private static void moveChangingOnlyCase(Path source, Path target) throws IOException {
+        Path temporary = Files.createTempFile(source.getParent(), ".config-rename-", ".tmp");
+        Files.delete(temporary);
+        move(source, temporary);
+        try {
+            move(temporary, target);
+        } catch (IOException error) {
+            try { move(temporary, source); }
+            catch (IOException rollbackError) { error.addSuppressed(rollbackError); }
+            throw error;
+        }
     }
 
     private static void readLegacyValues(Object value, Map<VariableType, String> destination) {
