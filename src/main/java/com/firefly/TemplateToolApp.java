@@ -1,6 +1,7 @@
 package com.firefly;
 
 import com.firefly.core.*;
+import com.firefly.application.*;
 import com.firefly.ui.DatePickerPanel;
 import com.firefly.ui.ResultPanel;
 import com.firefly.ui.VariableInputPanel;
@@ -63,20 +64,18 @@ public final class TemplateToolApp extends JFrame {
     private TemplateBusyLayerUI templateBusyLayerUI;
     private JLayer<JComponent> templateBusyLayer;
 
-    private String currentTemplateName = "", currentTemplate = "", lastDiskContent = "";
+    private String lastDiskContent = "";
     private boolean currentTemplateSaved, docxMode, resultValid, currentResultDocx, programmaticUpdate;
     private Path currentDocxResult;
-    private Map<String, VariableInputState> variableStates = new LinkedHashMap<>();
-    /** 包含当前模板会话内暂时从解析结果消失的变量；切换模板后整体销毁。 */
-    private final Map<String, VariableInputState> sessionVariableStates = new LinkedHashMap<>();
+    private final TemplateSession session = new TemplateSession();
+    private final GenerationService generationService = new GenerationService();
     /** 本次运行中已从模板文件确认过的变量集合；退出时只检查这些模板。 */
     private final Map<String, Set<String>> checkedTemplateVariables = new LinkedHashMap<>();
-    private TemplateConfig persistedTemplateConfig = new TemplateConfig("");
     private TemplateHelpDialog helpDialog;
     private String fullStatusText = " ";
     private FontScalePreset fontScalePreset;
     private boolean initializationScheduled;
-    private long templateRevision, inputRevision, generationSequence;
+    private long generationSequence;
     private Long activeGenerationId;
 
     private static final String TASK_INITIALIZE = "initialize";
@@ -246,16 +245,10 @@ public final class TemplateToolApp extends JFrame {
         datePicker = new DatePickerPanel();
         datePicker.setBorder(BorderFactory.createTitledBorder("日期基准"));
         right.add(datePicker, BorderLayout.NORTH);
-        variablePanel = new VariableInputPanel(issueManager);
+        variablePanel = new VariableInputPanel(issueManager, session);
         variablePanel.setStatusListener(this::setStatus);
         variablePanel.setCommitListener(() -> saveCurrentTemplateConfig(false));
-        variablePanel.setDecimalPlacesListener(decimalPlaces -> {
-            if (!programmaticUpdate) {
-                inputRevision++;
-                invalidateResult("小数位数已改为 " + decimalPlaces + " 位，请重新生成。");
-                templateConfigSaveTimer.restart();
-            }
-        });
+        variablePanel.setDecimalPlacesListener(session::setDecimalPlaces);
         right.add(variablePanel);
         return right;
     }
@@ -266,17 +259,22 @@ public final class TemplateToolApp extends JFrame {
             public void removeUpdate(DocumentEvent e) { templateEdited(); }
             public void changedUpdate(DocumentEvent e) { templateEdited(); }
         });
-        variablePanel.setChangeListener(() -> {
-            if (!programmaticUpdate) {
-                inputRevision++;
-                invalidateResult("内容已修改，请重新生成。");
-                templateConfigSaveTimer.restart();
-                if (helpDialog != null) helpDialog.refreshIfVisible();
+        session.setChangeListener(change -> {
+            if (change == TemplateSession.Change.BATCH) variablePanel.refreshValues();
+            if (change == TemplateSession.Change.DECIMAL_PLACES) {
+                variablePanel.setDecimalPlaces(session.decimalPlaces());
+            }
+            invalidateResult(change == TemplateSession.Change.DECIMAL_PLACES
+                    ? "小数位数已改为 " + session.decimalPlaces() + " 位，请重新生成。"
+                    : "内容已修改，请重新生成。");
+            templateConfigSaveTimer.restart();
+            if (change != TemplateSession.Change.DECIMAL_PLACES && helpDialog != null) {
+                helpDialog.refreshIfVisible();
             }
         });
         datePicker.setChangeListener(() -> {
             if (!programmaticUpdate) {
-                inputRevision++;
+                session.markInputChanged();
                 refreshDateValidation();
                 invalidateResult("内容已修改，请重新生成。");
             }
@@ -353,7 +351,7 @@ public final class TemplateToolApp extends JFrame {
 
     private void templateEdited() {
         if (programmaticUpdate) return;
-        templateRevision++;
+        session.markTemplateEdited();
         invalidateResult("内容已修改，请重新生成。");
         updateDirtyIndicator();
         templateSyncTimer.restart();
@@ -361,9 +359,9 @@ public final class TemplateToolApp extends JFrame {
 
     private void synchronizeEditedTemplate() {
         String text = templateText.getText();
-        if (!text.equals(currentTemplate)) {
-            currentTemplate = text;
-            rebuildVariableStates(TemplateParser.parse(text));
+        if (!text.equals(session.templateText())) {
+            session.synchronizeText(text);
+            refreshVariablePanel();
             if (helpDialog != null) helpDialog.refreshIfVisible();
         }
     }
@@ -371,34 +369,16 @@ public final class TemplateToolApp extends JFrame {
     private boolean syncTemplate() {
         templateSyncTimer.stop();
         String text = templateText.getText();
-        if (text.equals(currentTemplate)) return false;
-        List<String> old = new ArrayList<>(variableStates.keySet());
-        currentTemplate = text;
-        rebuildVariableStates(TemplateParser.parse(text));
-        return !old.equals(new ArrayList<>(variableStates.keySet()));
+        if (text.equals(session.templateText())) return false;
+        List<String> old = new ArrayList<>(session.variables().keySet());
+        session.synchronizeText(text);
+        refreshVariablePanel();
+        return !old.equals(new ArrayList<>(session.variables().keySet()));
     }
 
-    private void rebuildVariableStates(TemplateParser.ParsedTemplate parsed) {
-        Map<String, VariableInputState> next = new LinkedHashMap<>();
-        for (TemplateParser.VariableSpec spec : parsed.variables()) {
-            VariableInputState current = sessionVariableStates.get(spec.name());
-            if (current != null) {
-                next.put(spec.name(), current.copyFor(spec));
-            } else {
-                TemplateConfig.Entry saved = persistedTemplateConfig.variables().get(spec.name());
-                VariableType type = saved == null || saved.type() == null
-                        ? spec.defaultType() : saved.type();
-                if (spec.numericLocked()) type = VariableType.NUMBER;
-                next.put(spec.name(), new VariableInputState(spec.name(), type,
-                        saved == null ? "" : saved.value(),
-                        saved == null ? Map.of() : saved.legacySessionValues(),
-                        spec.numericLocked()));
-            }
-        }
-        sessionVariableStates.putAll(next);
-        variableStates = next;
+    private void refreshVariablePanel() {
         programmaticUpdate = true;
-        try { variablePanel.rebuild(variableStates); }
+        try { variablePanel.rebuild(session.variables()); }
         finally { programmaticUpdate = false; }
         if (helpDialog != null) helpDialog.refreshIfVisible();
     }
@@ -411,7 +391,7 @@ public final class TemplateToolApp extends JFrame {
     private void loadTemplateAsync(String name, Runnable afterSuccess) {
         if (name == null || name.isBlank()) return;
         templateConfigSaveTimer.stop();
-        if (!currentTemplateName.isEmpty() && !saveCurrentTemplateConfig(true)) return;
+        if (!session.templateName().isEmpty() && !saveCurrentTemplateConfig(true)) return;
         boolean word = DocxProcessor.isDocxName(name);
         fileTasks.submit(TASK_LOAD_TEMPLATE, FileOperationText.LOAD_TEMPLATE.taskName(),
                 FileTaskManager.LockScope.TEMPLATE, true,
@@ -444,22 +424,16 @@ public final class TemplateToolApp extends JFrame {
     }
 
     private void applyLoadedTemplate(LoadedTemplate loaded) {
-        sessionVariableStates.clear();
-        currentTemplateName = loaded.name();
-        currentTemplate = loaded.text();
+        session.load(loaded.name(), loaded.text(), loaded.config(), loaded.parsed());
         lastDiskContent = loaded.text();
         issueManager.clear();
         currentTemplateSaved = true;
         setTemplateText(loaded.text());
         setDocxMode(loaded.word());
-        persistedTemplateConfig = loaded.config();
         setDecimalPlacesFromConfig();
-        variableStates = new LinkedHashMap<>();
-        rebuildVariableStates(loaded.parsed());
+        refreshVariablePanel();
         rememberCheckedVariables(loaded.name(), loaded.parsed());
         invalidateResult(null);
-        templateRevision++;
-        inputRevision++;
         updateDirtyIndicator();
         rememberTemplate(loaded.name());
         setStatus("已加载模板：" + loaded.name()
@@ -469,8 +443,8 @@ public final class TemplateToolApp extends JFrame {
         if (loaded.legacy().found()) {
             String displayedText = loaded.text();
             SwingUtilities.invokeLater(() -> {
-                if (!loaded.name().equals(currentTemplateName)
-                        || !displayedText.equals(currentTemplate)
+                if (!loaded.name().equals(session.templateName())
+                        || !displayedText.equals(session.templateText())
                         || !displayedText.equals(lastDiskContent)) return;
                 templateNameLabel.paintImmediately(templateNameLabel.getVisibleRect());
                 templateText.paintImmediately(templateText.getVisibleRect());
@@ -524,20 +498,16 @@ public final class TemplateToolApp extends JFrame {
                                     TemplateParser.ParsedTemplate parsed) { }
 
     private void applyMigratedTemplate(String name, MigratedTemplate result) {
-        if (!name.equals(currentTemplateName)) return;
-        currentTemplate = result.text();
+        if (!name.equals(session.templateName())) return;
+        session.migrate(result.text(), result.config(), result.parsed());
         lastDiskContent = result.text();
         currentTemplateSaved = true;
         issueManager.clear();
         setTemplateText(result.text());
-        persistedTemplateConfig = result.config();
         setDecimalPlacesFromConfig();
-        variableStates = new LinkedHashMap<>();
-        rebuildVariableStates(result.parsed());
+        refreshVariablePanel();
         rememberCheckedVariables(name, result.parsed());
         invalidateResult(null);
-        templateRevision++;
-        inputRevision++;
         updateDirtyIndicator();
         setStatus("已转换 " + result.migration().scan().count() + " 处旧写法；备份："
                 + result.migration().backup().getFileName());
@@ -618,8 +588,8 @@ public final class TemplateToolApp extends JFrame {
     }
 
     private void promptRenameCurrentTemplate() {
-        if (currentTemplateName.isEmpty()) return;
-        String oldName = currentTemplateName;
+        if (session.templateName().isEmpty()) return;
+        String oldName = session.templateName();
         String oldFileName = templateStore.templateFile(oldName).getFileName().toString();
         String oldExtension = extensionOf(oldFileName);
         String oldBaseName = oldFileName.substring(0, oldFileName.length() - oldExtension.length());
@@ -679,11 +649,10 @@ public final class TemplateToolApp extends JFrame {
                     progress.update("重命名完成", 100, 100);
                     return new RenameTemplateResult(oldName, newName);
                 }, renamed -> {
-                    if (!renamed.oldName().equals(currentTemplateName)) return;
-                    currentTemplateName = renamed.newName();
+                    if (!renamed.oldName().equals(session.templateName())) return;
                     Set<String> checked = checkedTemplateVariables.remove(renamed.oldName());
                     if (checked != null) checkedTemplateVariables.put(renamed.newName(), checked);
-                    persistedTemplateConfig = templateConfigStore.load(renamed.newName());
+                    session.rename(renamed.newName(), templateConfigStore.load(renamed.newName()));
                     rememberTemplate(renamed.newName());
                     updateDirtyIndicator();
                     setStatus("模板已重命名为：" + renamed.newName());
@@ -707,15 +676,14 @@ public final class TemplateToolApp extends JFrame {
         }
         templateConfigSaveTimer.stop();
         if (!saveCurrentTemplateConfig(true)) return;
-        sessionVariableStates.clear();
-        currentTemplateName = name; currentTemplate = ""; lastDiskContent = "";
+        session.load(name, "", templateConfigStore.load(name), TemplateParser.parse(""));
+        lastDiskContent = "";
         issueManager.clear();
-        currentTemplateSaved = false; persistedTemplateConfig = templateConfigStore.load(name);
+        currentTemplateSaved = false;
         setDecimalPlacesFromConfig();
-        variableStates = new LinkedHashMap<>();
-        setDocxMode(false); setTemplateText(""); rebuildVariableStates(TemplateParser.parse(""));
+        setDocxMode(false); setTemplateText(""); refreshVariablePanel();
         checkedTemplateVariables.put(name, Set.of());
-        invalidateResult(null); templateRevision++; inputRevision++;
+        invalidateResult(null);
         updateDirtyIndicator(); rememberTemplate(name);
         setStatus("新模板 " + name + " 尚未保存。");
     }
@@ -731,12 +699,12 @@ public final class TemplateToolApp extends JFrame {
             return;
         }
         syncTemplate();
-        if (currentTemplateName.isEmpty() || !isTxtName(currentTemplateName)) {
+        if (session.templateName().isEmpty() || !isTxtName(session.templateName())) {
             showWarning("文本模板只能保存为 .txt 文件。", "文件类型不支持");
             return;
         }
-        SaveTemplateRequest request = new SaveTemplateRequest(currentTemplateName,
-                currentTemplate, TemplateParser.parse(currentTemplate));
+        SaveTemplateRequest request = new SaveTemplateRequest(session.templateName(),
+                session.templateText(), TemplateParser.parse(session.templateText()));
         fileTasks.submit(TASK_SAVE_TEMPLATE, FileOperationText.SAVE_TEMPLATE.taskName(),
                 FileTaskManager.LockScope.TEMPLATE, false,
                 progress -> {
@@ -745,7 +713,7 @@ public final class TemplateToolApp extends JFrame {
                     progress.update(FileOperationText.SAVE_TEMPLATE.inProgress(), 100, 100);
                     return request;
                 }, saved -> {
-                    if (saved.name().equals(currentTemplateName)) {
+                    if (saved.name().equals(session.templateName())) {
                         lastDiskContent = saved.text();
                         currentTemplateSaved = templateText.getText().equals(saved.text());
                         rememberCheckedVariables(saved.name(), saved.parsed());
@@ -762,14 +730,14 @@ public final class TemplateToolApp extends JFrame {
     private boolean saveTemplateInternal(boolean showSuccess) {
         if (docxMode) { showWarning("Word 模板为只读预览，请使用 Word 编辑后重新打开或重新加载。", "提示"); return false; }
         syncTemplate();
-        if (currentTemplateName.isEmpty() || !isTxtName(currentTemplateName)) { showWarning("文本模板只能保存为 .txt 文件。", "文件类型不支持"); return false; }
+        if (session.templateName().isEmpty() || !isTxtName(session.templateName())) { showWarning("文本模板只能保存为 .txt 文件。", "文件类型不支持"); return false; }
         try {
-            templateStore.writeTemplate(currentTemplateName, currentTemplate);
-            lastDiskContent = currentTemplate; currentTemplateSaved = true;
-            rememberCheckedVariables(currentTemplateName, TemplateParser.parse(currentTemplate));
+            templateStore.writeTemplate(session.templateName(), session.templateText());
+            lastDiskContent = session.templateText(); currentTemplateSaved = true;
+            rememberCheckedVariables(session.templateName(), TemplateParser.parse(session.templateText()));
         } catch (IOException e) { showError("无法写入模板文件：\n" + e, "保存失败"); return false; }
-        updateDirtyIndicator(); rememberTemplate(currentTemplateName);
-        setStatus("模板已保存。", "模板已保存到：" + templateStore.templateFile(currentTemplateName));
+        updateDirtyIndicator(); rememberTemplate(session.templateName());
+        setStatus("模板已保存。", "模板已保存到：" + templateStore.templateFile(session.templateName()));
         if (showSuccess) JOptionPane.showMessageDialog(this, "模板已保存。", "已保存", JOptionPane.INFORMATION_MESSAGE);
         return true;
     }
@@ -876,8 +844,8 @@ public final class TemplateToolApp extends JFrame {
 
     private Map<String, Set<String>> checkedVariablesIncludingCurrentText() {
         Map<String, Set<String>> checked = new LinkedHashMap<>(checkedTemplateVariables);
-        if (!currentTemplateName.isEmpty()) {
-            checked.put(currentTemplateName,
+        if (!session.templateName().isEmpty()) {
+            checked.put(session.templateName(),
                     activeVariableNames(TemplateParser.parse(templateText.getText())));
         }
         return checked;
@@ -891,8 +859,8 @@ public final class TemplateToolApp extends JFrame {
         if (report.isEmpty()) return true;
         try {
             templateConfigStore.pruneUnusedVariables(report);
-            if (!currentTemplateName.isEmpty()) {
-                persistedTemplateConfig = templateConfigStore.load(currentTemplateName);
+            if (!session.templateName().isEmpty()) {
+                session.updatePersistedConfig(templateConfigStore.load(session.templateName()));
             }
             return true;
         } catch (IOException | IllegalArgumentException e) {
@@ -907,7 +875,6 @@ public final class TemplateToolApp extends JFrame {
         appConfig.setPreviewResultDividerLocation(previewResultSplit.getDividerLocation());
         saveAppConfig(true);
         deleteQuietly(currentDocxResult);
-        sessionVariableStates.clear();
         dispose(); System.exit(0);
     }
 
@@ -929,8 +896,8 @@ public final class TemplateToolApp extends JFrame {
 
     private void updateDirtyIndicator() {
         boolean dirty = hasUnsavedTemplateChanges();
-        templateNameLabel.setText((currentTemplateName.isEmpty() ? "—" : currentTemplateName) + (dirty ? " *" : ""));
-        templateNameLabel.setEnabled(!currentTemplateName.isEmpty());
+        templateNameLabel.setText((session.templateName().isEmpty() ? "—" : session.templateName()) + (dirty ? " *" : ""));
+        templateNameLabel.setEnabled(!session.templateName().isEmpty());
         setTitle("模板填充工具" + (dirty ? " *" : ""));
     }
 
@@ -945,11 +912,11 @@ public final class TemplateToolApp extends JFrame {
     }
 
     private boolean saveCurrentTemplateConfig(boolean notify) {
-        if (currentTemplateName.isEmpty()) return true;
+        if (session.templateName().isEmpty()) return true;
         try {
-            templateConfigStore.save(currentTemplateName, sessionVariableStates,
-                    variablePanel.decimalPlaces());
-            persistedTemplateConfig = templateConfigStore.load(currentTemplateName);
+            templateConfigStore.save(session.templateName(), session.variablesForPersistence(),
+                    session.decimalPlaces());
+            session.updatePersistedConfig(templateConfigStore.load(session.templateName()));
             return true;
         } catch (IOException | IllegalArgumentException e) {
             setStatus("模板变量配置保存失败：" + e.getMessage());
@@ -972,18 +939,15 @@ public final class TemplateToolApp extends JFrame {
         if (values == null) return;
         LocalDate date = datePicker.getSelectedDate();
         if (date == null) { refreshDateValidation(); showWarning("基准日期格式不正确，请输入有效日期，例如 2026-09-01。", "日期格式错误"); return; }
-        TemplateParser.ParsedTemplate parsed = TemplateParser.parse(currentTemplate);
-        Map<String, String> auto = TemplateConstants.autoValues(date);
         long sequence = ++generationSequence;
         activeGenerationId = sequence;
-        GenerationRequest request = new GenerationRequest(sequence, docxMode,
-                currentTemplateName, currentTemplate, Map.copyOf(values), Map.copyOf(auto),
-                Set.copyOf(numericVariableNames()), variablePanel.decimalPlaces(), parsed, date,
-                templateRevision, inputRevision);
+        GenerationRequest request = GenerationRequest.capture(sequence, docxMode,
+                docxMode ? templateStore.templateFile(session.templateName()) : null, session, date);
         Path[] temporary = new Path[1];
         fileTasks.submit(TASK_GENERATE, FileOperationText.GENERATE_RESULT.taskName(),
                 FileTaskManager.LockScope.NONE, true,
-                progress -> generateInBackground(request, progress, temporary),
+                progress -> generationService.generate(request, progress::update, progress::checkpoint,
+                        path -> temporary[0] = path),
                 this::finishGeneration,
                 error -> {
                     deleteQuietly(temporary[0]);
@@ -997,46 +961,6 @@ public final class TemplateToolApp extends JFrame {
                 });
     }
 
-    private record GenerationRequest(long sequence, boolean word, String templateName,
-                                     String templateText, Map<String, String> values,
-                                     Map<String, String> autoValues,
-                                     Set<String> numericVariables, int decimalPlaces,
-                                     TemplateParser.ParsedTemplate parsed, LocalDate date,
-                                     long templateRevision, long inputRevision) { }
-
-    private record GeneratedResult(GenerationRequest request,
-                                   TemplateRenderer.RenderResult renderResult,
-                                   Path docxFile) { }
-
-    private GeneratedResult generateInBackground(GenerationRequest request,
-                                                  FileTaskManager.ProgressReporter progress,
-                                                  Path[] temporary) throws IOException {
-        progress.update(FileOperationText.GENERATE_RESULT.inProgress(), 5, 100);
-        progress.checkpoint();
-        if (!request.word()) {
-            TemplateRenderer.RenderResult result = TemplateRenderer.renderUnified(
-                    request.templateText(), request.values(), request.autoValues(),
-                    request.numericVariables(), request.decimalPlaces());
-            progress.update(FileOperationText.GENERATE_RESULT.inProgress(), 100, 100);
-            return new GeneratedResult(request, result, null);
-        }
-        Path temp = Files.createTempFile("tt_result", ".docx");
-        temp.toFile().deleteOnExit();
-        temporary[0] = temp;
-        try {
-            TemplateRenderer.RenderResult result = DocxProcessor.renderUnified(
-                    templateStore.templateFile(request.templateName()), temp,
-                    request.values(), request.autoValues(), request.numericVariables(),
-                    request.decimalPlaces(),
-                    (phase, completed, total) -> progress.update(phase, completed, total));
-            progress.checkpoint();
-            return new GeneratedResult(request, result, temp);
-        } catch (IOException | RuntimeException e) {
-            deleteQuietly(temp);
-            throw e;
-        }
-    }
-
     private void finishGeneration(GeneratedResult generated) {
         GenerationRequest request = generated.request();
         if (Objects.equals(activeGenerationId, request.sequence())) activeGenerationId = null;
@@ -1046,9 +970,7 @@ public final class TemplateToolApp extends JFrame {
             setStatus("表达式计算失败，未生成结果。以前的有效结果未被替换。");
             return;
         }
-        boolean stale = request.templateRevision() != templateRevision
-                || request.inputRevision() != inputRevision
-                || !request.templateName().equals(currentTemplateName);
+        boolean stale = request.isStale(session);
         if (stale) {
             handleStaleGeneration(generated);
             return;
@@ -1088,28 +1010,14 @@ public final class TemplateToolApp extends JFrame {
     }
 
     private Map<String, String> validatedReplacementValues() {
-        Map<String, String> values = new LinkedHashMap<>();
-        List<String> problems = new ArrayList<>();
-        for (VariableInputState state : variableStates.values()) {
-            if (state.type() == VariableType.NUMBER) {
-                String value = ValueNormalizer.normalize(state.value());
-                if (value == null) problems.add(state.name()); else values.put(state.name(), value);
-            } else values.put(state.name(), state.value());
-        }
+        VariableValidation.Result validation = VariableValidation.validate(session.variables());
+        List<String> problems = validation.invalidNames();
         if (!problems.isEmpty()) {
             variablePanel.refreshAllValidation();
             showWarning("以下数值变量格式不正确：\n\n" + String.join("、", problems) + "\n\n内容已保留，请修改后重新生成。", "输入格式错误");
             setStatus("存在无效数值，未生成结果。"); return null;
         }
-        return values;
-    }
-
-    private Set<String> numericVariableNames() {
-        Set<String> names = new LinkedHashSet<>();
-        for (VariableInputState state : variableStates.values()) {
-            if (state.type() == VariableType.NUMBER) names.add(state.name());
-        }
-        return names;
+        return validation.values();
     }
 
     private static String buildSuccessMessage(TemplateParser.ParsedTemplate parsed, LocalDate date) {
@@ -1131,7 +1039,7 @@ public final class TemplateToolApp extends JFrame {
 
     private void setDecimalPlacesFromConfig() {
         programmaticUpdate = true;
-        try { variablePanel.setDecimalPlaces(persistedTemplateConfig.decimalPlaces()); }
+        try { variablePanel.setDecimalPlaces(session.decimalPlaces()); }
         finally { programmaticUpdate = false; }
     }
     private boolean requireResult() {
@@ -1227,11 +1135,11 @@ public final class TemplateToolApp extends JFrame {
     }
 
     private void refreshCurrentTemplate() {
-        if (currentTemplateName.isEmpty()) {
+        if (session.templateName().isEmpty()) {
             showWarning("当前没有可刷新的模板。", "无法刷新");
             return;
         }
-        Path templateFile = templateStore.templateFile(currentTemplateName);
+        Path templateFile = templateStore.templateFile(session.templateName());
         if (!Files.isRegularFile(templateFile)) {
             showWarning("当前模板文件尚未保存或已被移除：\n" + templateFile,
                     "无法刷新");
@@ -1244,7 +1152,7 @@ public final class TemplateToolApp extends JFrame {
             if (choice != JOptionPane.OK_OPTION) return;
         }
         if (!confirmCancelGeneration("刷新模板")) return;
-        String name = currentTemplateName;
+        String name = session.templateName();
         loadTemplateAsync(name, () -> setStatus("已从磁盘刷新模板：" + name));
     }
 
@@ -1320,7 +1228,7 @@ public final class TemplateToolApp extends JFrame {
     private void showHelp() {
         if (helpDialog == null) {
             helpDialog = new TemplateHelpDialog(this, () -> templateText.getText(),
-                    () -> Map.copyOf(variableStates));
+                    () -> Map.copyOf(session.variables()));
         }
         helpDialog.showOrRefresh();
     }

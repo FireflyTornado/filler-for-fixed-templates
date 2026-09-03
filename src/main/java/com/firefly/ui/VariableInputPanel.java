@@ -1,5 +1,6 @@
 package com.firefly.ui;
 
+import com.firefly.application.TemplateSession;
 import com.firefly.core.ValueNormalizer;
 import com.firefly.core.NumericFormatter;
 import com.firefly.core.VariableInputState;
@@ -29,17 +30,18 @@ public final class VariableInputPanel extends JPanel {
     private final JLabel decimalPlacesLabel = new JLabel();
     private final Map<String, Row> rowByName = new LinkedHashMap<>();
     private final ValidationIssueManager issues;
+    private final TemplateSession session;
     private Map<String, VariableInputState> states = new LinkedHashMap<>();
-    private Runnable changeListener = () -> { };
     private Runnable commitListener = () -> { };
     private Consumer<String> statusListener = text -> { };
     private IntConsumer decimalPlacesListener = value -> { };
     private int decimalPlaces = NumericFormatter.DEFAULT_DECIMAL_PLACES;
     private boolean rebuilding;
 
-    public VariableInputPanel(ValidationIssueManager issues) {
+    public VariableInputPanel(ValidationIssueManager issues, TemplateSession session) {
         super(new BorderLayout(4, 4));
         this.issues = issues;
+        this.session = session;
         setBorder(BorderFactory.createTitledBorder("变量填写"));
         scroll.setBorder(BorderFactory.createEmptyBorder());
         scroll.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
@@ -97,7 +99,6 @@ public final class VariableInputPanel extends JPanel {
         Row row = rowByName.get(name);
         return row != null && row.warning.isVisible();
     }
-    public void setChangeListener(Runnable listener) { changeListener = listener == null ? () -> { } : listener; }
     public void setCommitListener(Runnable listener) { commitListener = listener == null ? () -> { } : listener; }
     public void setStatusListener(Consumer<String> listener) { statusListener = listener == null ? text -> { } : listener; }
     public void setDecimalPlacesListener(IntConsumer listener) {
@@ -133,6 +134,15 @@ public final class VariableInputPanel extends JPanel {
             rows.revalidate(); rows.repaint();
         } finally { rebuilding = false; }
         refreshAllValidation();
+    }
+
+    /** 批量更新后只刷新值，不重建控件或触发文本编辑回调。 */
+    public void refreshValues() {
+        for (Row row : rowByName.values()) {
+            row.state = session.variable(row.state.name());
+            setComboType(row, row.state.type());
+            configureValueField(row);
+        }
     }
 
     private void addHeader(GridBagConstraints gc) {
@@ -223,7 +233,8 @@ public final class VariableInputPanel extends JPanel {
         JPopupMenu menu = new JPopupMenu();
         JMenuItem clearOthers = new JMenuItem("清除其他类型内容");
         clearOthers.addActionListener(e -> {
-            row.state.clearOtherTypeValues();
+            session.clearOtherTypeValues(row.state.name());
+            row.state = session.variable(row.state.name());
             statusListener.accept("已清除变量“" + row.state.name() + "”的其他类型内容。");
         });
         menu.add(clearOthers);
@@ -260,9 +271,9 @@ public final class VariableInputPanel extends JPanel {
             row.type.requestFocusInWindow();
             return;
         }
-        row.state.activateType(target, initial);
+        session.activateType(row.state.name(), target, initial);
+        row.state = session.variable(row.state.name());
         configureValueField(row);
-        changeListener.run();
         commitListener.run();
         row.type.requestFocusInWindow();
     }
@@ -285,18 +296,18 @@ public final class VariableInputPanel extends JPanel {
 
     private void valueChanged(Row row) {
         if (rebuilding || row.state.type() == VariableType.MULTILINE_TEXT) return;
-        row.state.setValue(row.field.getText());
+        session.setValue(row.state.name(), row.field.getText());
+        row.state = session.variable(row.state.name());
         validateRow(row);
-        changeListener.run();
     }
 
     private void editMultiline(Row row) {
         String edited = MultilineEditorDialog.edit(SwingUtilities.getWindowAncestor(this),
                 row.state.name(), row.state.value());
         if (edited != null && !edited.equals(row.state.value())) {
-            row.state.setValue(edited);
+            session.setValue(row.state.name(), edited);
+            row.state = session.variable(row.state.name());
             configureValueField(row);
-            changeListener.run();
             commitListener.run();
         }
         row.expand.requestFocusInWindow();
@@ -411,7 +422,26 @@ public final class VariableInputPanel extends JPanel {
                 (normal.getBlue() * 3 + 70) / 4);
     }
 
-    private record Row(VariableInputState state, JComboBox<VariableType> type, JTextField field,
-                       JButton expand, JLabel warning, Color normalBackground,
-                       Border normalBorder, int order) { }
+    private static final class Row {
+        VariableInputState state;
+        final JComboBox<VariableType> type;
+        final JTextField field;
+        final JButton expand;
+        final JLabel warning;
+        final Color normalBackground;
+        final Border normalBorder;
+        final int order;
+
+        Row(VariableInputState state, JComboBox<VariableType> type, JTextField field,
+            JButton expand, JLabel warning, Color normalBackground, Border normalBorder, int order) {
+            this.state = state;
+            this.type = type;
+            this.field = field;
+            this.expand = expand;
+            this.warning = warning;
+            this.normalBackground = normalBackground;
+            this.normalBorder = normalBorder;
+            this.order = order;
+        }
+    }
 }

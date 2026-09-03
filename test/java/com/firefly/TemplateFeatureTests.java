@@ -29,7 +29,7 @@ import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
-/** 零依赖回归测试，由根目录 build.bat 直接运行。 */
+/** 零依赖回归测试，由根目录 build-test.bat 通过 AllTests 运行。 */
 public final class TemplateFeatureTests {
     private static int tests;
 

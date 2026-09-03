@@ -75,6 +75,15 @@ public final class VariableInputState {
         return new VariableInputState(spec.name(), type, value(), sessionValues, spec.numericLocked());
     }
 
+    /** 独立快照，包含尚未确认的数值转换状态。 */
+    public VariableInputState copy() {
+        VariableInputState copy = new VariableInputState(name, type, value(), sessionValues, numericLocked);
+        copy.sessionValues.clear();
+        copy.sessionValues.putAll(sessionValues);
+        copy.numericAttentionRequired = numericAttentionRequired;
+        return copy;
+    }
+
     private static String safe(String value) { return value == null ? "" : value; }
 
     private String firstTextDraft() {

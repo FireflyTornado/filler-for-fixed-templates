@@ -165,22 +165,42 @@
 
 ## 构建
 
-双击 `build.bat`，或在命令行执行：
+主程序和测试使用两个独立脚本。只构建主程序时，双击 `build.bat`，或在命令行执行：
 
 ```bat
 build.bat
 ```
 
-构建需要 JDK 17 或更高版本（含 `javac` 和 `jar`）。脚本会清理旧的 `out/` 与 `out-test/`，重新编译源码并运行全部回归测试，测试成功后生成 `TemplateTool.jar`。
+需要测试时，在主程序构建成功后单独运行 `build-test.bat`。在另一个批处理文件中依次执行两步时，使用：
+
+```bat
+call build.bat
+if errorlevel 1 exit /b 1
+call build-test.bat
+```
+
+构建需要 JDK 17 或更高版本。两个脚本各自优先使用 `JAVA_HOME`，其次查找 `Program Files/Java` 下的 JDK，最后使用 PATH。主程序构建使用 `javac` 和 `jar`；测试构建使用 `javac` 和 `java`。
+
+| 脚本 | 职责 | 输出 |
+| --- | --- | --- |
+| `build.bat` | 清理主程序输出，递归编译 `src/main/java`，仅打包主程序类；不编译或运行测试 | `out/`、`TemplateTool.jar` |
+| `build-test.bat` | 清理测试输出，递归编译 `test/java`，引用现有 `TemplateTool.jar`，通过 `com.firefly.AllTests` 运行全部回归检查 | `out-test/` |
+
+两个脚本不会相互调用，也不会清理对方的输出目录。测试脚本不修改主程序 JAR；缺少 JAR 时会提示先运行 `build.bat`。修改主源码后，应重新构建主程序，再运行测试，以验证最新代码。主程序构建成功只表示编译和打包成功，测试结果由测试脚本单独报告；测试失败也不会删除或替换已有 JAR。
+
+源码清单分别写入 `work/build/main-sources.txt`、`work/build/test-sources.txt`。新增源码包会自动参与编译；新增测试套件需在 `AllTests` 中注册。
 
 ## 项目结构
 
 ```
-├── build.bat                      # 编译、测试并打包 TemplateTool.jar
+├── build.bat                      # 仅编译主程序并打包 TemplateTool.jar
+├── build-test.bat                 # 独立编译测试，并针对现有 JAR 运行回归检查
 ├── launcher.bat                   # Windows 一键启动脚本
 ├── .gitignore                     # 忽略构建产物、运行配置和本地编辑器文件
 ├── TemplateTool.jar               # 构建时由 build.bat 生成的可运行程序
-├── out/ / out-test/               # 构建时生成的主程序与测试 class 文件
+├── out/                          # 仅主程序 class 文件，发布 JAR 的唯一来源
+├── out-test/                     # 仅测试 class 文件，不打入发布 JAR
+├── work/build/                   # 构建时生成的递归源码清单等中间文件
 ├── README.md / README.en.md       # 中英文说明文档
 ├── LICENSE                        # MIT 许可证
 ├── Templates/                     # 首次运行时自动创建；保存模板及迁移备份
@@ -189,8 +209,14 @@ build.bat
 ├── last_values.json               # 仅旧版程序生成；新版只读取它进行一次性迁移
 ├── src/main/java/com/firefly/
 │   ├── Main.java                    # 程序入口与系统外观初始化
-│   ├── TemplateToolApp.java         # 主窗口、模板加载、生成与迁移交互
+│   ├── TemplateToolApp.java         # 主窗口、文件任务编排、提示与结果展示
 │   ├── TemplateConstants.java       # 占位符、日期变量和默认模板常量
+│   ├── application/                # 不依赖 Swing 的会话与生成业务
+│   │   ├── TemplateSession.java     # 当前模板、变量草稿、版本及统一赋值入口
+│   │   ├── VariableValidation.java  # 生成前数值规范化、问题汇总与数值变量清单
+│   │   ├── GenerationRequest.java   # 独立输入快照与结果过期判断
+│   │   ├── GeneratedResult.java     # 生成结果及临时 Word 文件信息
+│   │   └── GenerationService.java   # 文本/Word 生成、进度回调及失败/取消清理
 │   ├── core/
 │   │   ├── TemplateParser.java      # 提取普通变量、表达式依赖和日期变量
 │   │   ├── ExpressionEvaluator.java # 表达式分词与安全递归下降求值
@@ -202,7 +228,7 @@ build.bat
 │   │   ├── TextFileWriter.java      # UTF-8 BOM 文本读写与换行处理
 │   │   ├── ValueNormalizer.java     # 数值输入校验和规范化
 │   │   ├── VariableType.java        # 数值、短字符串和多行文本类型
-│   │   ├── VariableInputState.java  # 变量值、类型草稿和表达式锁定状态
+│   │   ├── VariableInputState.java  # 单变量值、类型草稿、表达式锁定及独立快照
 │   │   ├── AppConfig*.java          # 应用级配置模型与存储
 │   │   ├── TemplateConfig*.java     # 每模板变量与小数位数配置模型及存储
 │   │   ├── AtomicConfigWriter.java  # 配置临时写入与原子替换
@@ -212,7 +238,7 @@ build.bat
 │   │   └── LegacyConfigMigrator.java / LastValuesStore.java # 旧配置迁移
 │   └── ui/
 │       ├── DatePickerPanel.java      # 基准日期输入与日历
-│       ├── VariableInputPanel.java   # 统一变量输入和校验
+│       ├── VariableInputPanel.java   # 变量展示、转换交互与会话更新接线
 │       ├── ScrollablePanel.java      # 变量表单的自适应滚动容器
 │       ├── MultilineEditorDialog.java # 多行文本编辑
 │       ├── VariableTypeConversionDialog.java # 类型转换确认
@@ -223,10 +249,21 @@ build.bat
 │       ├── UiFontManager.java / FontScalePreset.java # 字号管理
 │       └── ValidationIssue*.java / IssueSeverity.java # 错误记录与定位
 └── test/java/com/firefly/
-    └── TemplateFeatureTests.java    # 变量、数值格式、Word、配置和迁移回归测试
+    ├── AllTests.java                # 所有回归测试套件的统一入口
+    ├── TemplateFeatureTests.java    # 原有变量、格式、Word、配置和迁移回归
+    └── application/
+        └── ApplicationTests.java    # 会话、批量赋值、生成快照、清理及界面接线回归
 ```
 
-当前工程不依赖 Maven、Gradle 或第三方库：主代码采用 `src/main/java` 布局，回归测试放在项目自定义的 `test/java` 目录并由 `build.bat` 直接编译。`TemplateTool.jar`、`out/`、`out-test/`、`Templates/`、`Config/` 和运行配置均属于生成内容或本机数据，已通过 `.gitignore` 排除。若以后迁移到 Maven 或 Gradle，可再把测试移动到惯用的 `src/test/java`，当前布局无需为现有构建流程调整。
+当前工程不依赖 Maven、Gradle 或第三方库：主代码采用 `src/main/java` 布局，回归测试放在项目自定义的 `test/java` 目录并由 `build-test.bat` 独立编译和运行。`TemplateTool.jar`、`out/`、`out-test/`、`work/`、`Templates/`、`Config/` 和运行配置均属于生成内容或本机数据，已通过 `.gitignore` 排除。若以后迁移到 Maven 或 Gradle，可再把测试移动到惯用的 `src/test/java`，当前布局无需为现有构建流程调整。
+
+### 后续功能的接入边界
+
+- `core` 保留模板解析、格式化、Word 处理和配置存储等现有能力；`application` 组合这些能力，管理会话与生成流程；`ui` 负责控件、确认对话框和错误定位。界面依赖应用层，应用层不依赖界面。
+- 手动输入通过 `TemplateSession.setValue`、`activateType` 更新；外部数据可以通过 `applyValues` 按当前变量类型一次赋值。批量入口会先检查所有值，拒绝未知变量、缺失值及空白或无效数值，成功后只发出一次变化通知，未提供的变量保留原值。手工填写数值留空按 0 的既有规则保持不变。
+- 主窗口订阅会话变化，负责旧结果失效、批量刷新和配置保存调度。读取变量返回独立快照，外部模块不能通过修改读取结果绕过更新流程。
+- 会话由同一线程串行操作；在桌面应用中使用 Swing 界面线程。后台读取数据后应返回界面线程应用更新；生成业务接收 `GenerationRequest` 快照，不读取窗口控件。模板编辑的版本标记先于延迟解析，保留原有过期结果保护。
+- 当前未实现 Excel 读取或映射界面；后续可增加读取与映射模块，通过会话入口接入。现有模板语法、配置格式与用户操作流程保持不变。
 
 ## 许可证
 

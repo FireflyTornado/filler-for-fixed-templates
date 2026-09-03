@@ -1,6 +1,7 @@
 # ---- 构建产物 ----
 /out/
 /out-test/
+/work/
 *.class
 manifest.tmp
 
