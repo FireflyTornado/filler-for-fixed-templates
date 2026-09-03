@@ -29,6 +29,11 @@ public record SpreadsheetData(Path path, long modified, long size, List<Sheet> s
             for (int c = 0; c < columns; c++) result.add(normalize(cell(row, c).display()));
             return List.copyOf(result);
         }
+        public List<String> rowTitles(int column) {
+            List<String> result = new ArrayList<>();
+            for (int r = 0; r < rows; r++) result.add(normalize(cell(r, column).display()));
+            return List.copyOf(result);
+        }
     }
     public static long key(int row, int column) { return ((long) row << 32) | (column & 0xffffffffL); }
     public static String normalize(String value) { return value == null ? "" : value.strip().replace('\u3000', ' '); }

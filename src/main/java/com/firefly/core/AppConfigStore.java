@@ -35,6 +35,7 @@ public final class AppConfigStore {
                 config.setMainDividerLocation(positiveInt(layout.get("mainDividerLocation")));
                 config.setPreviewResultDividerLocation(
                         positiveInt(layout.get("previewResultDividerLocation")));
+                config.setExtractionDividerLocation(positiveInt(layout.get("extractionDividerLocation")));
             }
             Object appearanceValue = root.get("appearance");
             if (appearanceValue instanceof Map<?, ?> appearance) {
@@ -59,6 +60,7 @@ public final class AppConfigStore {
         Map<String, Object> layout = new LinkedHashMap<>();
         layout.put("mainDividerLocation", config.mainDividerLocation());
         layout.put("previewResultDividerLocation", config.previewResultDividerLocation());
+        layout.put("extractionDividerLocation", config.extractionDividerLocation());
         root.put("layout", layout);
         Map<String, Object> appearance = new LinkedHashMap<>();
         appearance.put("fontScale", config.fontScale());

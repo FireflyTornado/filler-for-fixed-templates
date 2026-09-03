@@ -93,8 +93,8 @@ Loading, saving, generating, and exporting run as background file tasks. Cancell
 
 1. Select the target template and variable types. Names, identifiers, and dates usually use text; calculation inputs use numeric types.
 2. Open Data Extraction (`数据提取`) and choose an Excel file (`选择 Excel…`). The top flow shows `workbook.xlsx → template.txt/.docx`; template selection is synchronized with Template Filling.
-3. Select a worksheet, header row, row-title column (A=1), and current record row. Click a cell or enter an address such as `D8` to inspect its titles and content.
-4. Choose a positioning mode and target variable, then select `添加／更新映射`. Each variable has one mapping; one source may populate several variables.
+3. Select a worksheet, Column Titles Row (`列标题所在行`), and Row Titles Column (`行标题所在列`, accepting letters or column numbers). Column letters and titles appear on separate rows at the top; row numbers and titles appear in separate columns on the left. These header areas stay visible while scrolling; hover to read long titles.
+4. Click a variable in the lower table; Current Variable (`当前变量`) displays its name and type. Select the source cell and positioning mode, then select `添加／更新映射`. Each variable has one mapping; one source may populate several variables.
 5. Compare displayed content, the value to import, the existing value, and status. Resolve issues and select `应用到模板变量`.
 6. Return to Template Filling to review, adjust, generate, and export.
 
@@ -102,15 +102,22 @@ Loading, saving, generating, and exporting run as background file tasks. Cancell
 | --- | --- | --- |
 | Fixed cell | Reports with a stable layout | Uses coordinates with structural checks; layout changes require rebinding |
 | Row/column titles | Similar reports whose rows or columns may move | Relocates by titles and context, including renamed workbooks and worksheets |
-| Current record / column title | One customer, project, or record per row | Reuses column mappings while a different record row is selected |
+| Lock column / change selected row (`锁定列／更改选定行`) | One customer, project, or record per row | Finds the column by title and reads the selected row |
+| Lock row / change selected column (`锁定行／更改选定列`) | One customer, project, or record per column | Finds the row by title and reads the selected column |
 
-Same-name suggestions (`同名绑定建议…`) propose uniquely matching columns for user confirmation. Existing mappings can be disabled, updated, or changed to manual entry. Use `清理失效映射` to remove mappings for variables no longer present in the template.
+The row and column selectors retain their values separately and only affect their corresponding mode. The selector is hidden for fixed-cell and row/column-title mappings. The explanation below the mapping table shows the resolved source, destination template and variable, existing value, and expected replacement. Unsaved mapping edits must be added/updated before application. Selecting a different row or column only updates the preview.
+
+Same-name suggestions (`同名绑定建议…`) propose uniquely matching columns, or matching rows in locked-row mode, for user confirmation. Existing mappings can be updated or changed to manual entry. Unmapped variables also remain in the selection table. Use `清理失效映射` to remove mappings for variables no longer present in the template.
+
+Each launch uses a 1440×1000 default window, limited to the available screen area; window size is not remembered. The extraction divider position is saved and clamped to keep the lower variable table visible on smaller windows.
 
 ### Excel values and mapping limits
 
 - **Formulas:** reads saved calculation results, never formula text. It does not recalculate or modify the workbook. Recalculate and save in Excel, then refresh if results are missing or erroneous; saved results can also be stale.
 - **Text and numbers:** text uses displayed content, retaining leading zeros, date formats, and line breaks. Numbers use underlying values rather than rounded display values. Dates cannot be imported as numeric serials.
-- **Empty values:** errors by default. A mapping can preserve the existing value or allow empty text to clear it. Missing, erroneous, or ambiguous sources never silently become zero.
+- **Empty values:** an empty source cell defaults to Keep Existing Value (`空值保留原值`); Use Zero (`空值取0`) is also available. Numeric targets can retain their value or receive zero. Text targets show a notice when keeping existing text; Use Zero reports an error and blocks application. A literal zero is valid data. Missing titles, erroneous cells, and ambiguous sources are errors, never ordinary blanks.
+- **Legacy mappings:** the original record mode keeps its bindings under the new label. Legacy ERROR and CLEAR empty policies load as Keep Existing Value; each mapping can be changed to Use Zero explicitly.
+- **Legacy enabled state:** startup rewrites old configuration files, removes enabled flags, and converts disabled mappings to manual entry without changing variable values. Loading an imported legacy configuration also performs this conversion. Runtime mappings no longer have an enabled/disabled state.
 - **Structural changes:** mappings are restored only when sources can be uniquely located. Missing or duplicate required titles need rebinding. Fixed coordinates without recognizable anchors require explicit binding after opening the file.
 - **Saving and undo:** valid mapping changes are saved with the template, without binding to an Excel filename. Undo Last Import (`撤销本次填入`) preserves conflicting later manual edits. Source indicators (`↗`) and undo history last only for the current template session.
 - **External changes:** refresh if the workbook changes or becomes inaccessible. Refreshing does not itself replace entered values.

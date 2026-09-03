@@ -106,8 +106,11 @@ public final class TemplateToolApp extends JFrame {
         templateSyncTimer.setRepeats(false);
         templateConfigSaveTimer = new Timer(700, e -> saveCurrentTemplateConfig(false));
         templateConfigSaveTimer.setRepeats(false);
-        setSize(1100, 800);
-        setMinimumSize(new Dimension(860, 620));
+        Rectangle usable = GraphicsEnvironment.getLocalGraphicsEnvironment().getMaximumWindowBounds();
+        int width = Math.min(1440, Math.max(1, usable.width - 24));
+        int height = Math.min(1000, Math.max(1, usable.height - 24));
+        setSize(width, height);
+        setMinimumSize(new Dimension(Math.min(1080, width), Math.min(740, height)));
         setDefaultCloseOperation(WindowConstants.DO_NOTHING_ON_CLOSE);
         addWindowListener(new WindowAdapter() {
             @Override public void windowClosing(WindowEvent e) { closeApplication(); }
@@ -402,6 +405,7 @@ public final class TemplateToolApp extends JFrame {
                     progress.update("正在迁移旧配置", 55, 100);
                     new LegacyConfigMigrator(appDir, templateStore, templateConfigStore)
                             .migrateIfNeeded(appConfig, appConfigExisted);
+                    templateConfigStore.migrateLegacyMappingStates();
                     progress.checkpoint();
                     appConfigStore.save(appConfig);
                     progress.update("正在扫描模板", 85, 100);

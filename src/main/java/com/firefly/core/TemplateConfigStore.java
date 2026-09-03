@@ -77,7 +77,8 @@ public final class TemplateConfigStore {
             file = configFileForTemplate(templateName);
             if (!Files.isRegularFile(file)) return config;
             Object parsed = JsonData.parse(Files.readString(file, StandardCharsets.UTF_8));
-            if (!(parsed instanceof Map<?, ?> root)) return config;
+            if (!(parsed instanceof Map<?, ?> parsedRoot)) return config;
+            Map<?, ?> root = migrateMappingState(file, parsedRoot, false);
             config.setDataExtraction(com.firefly.extraction.MappingProfile.fromJson(root.get("dataExtraction")));
             Object decimalPlaces = root.get("decimalPlaces");
             if (decimalPlaces instanceof Number number) {
@@ -112,6 +113,44 @@ public final class TemplateConfigStore {
             // 此模板的配置损坏只使该模板回退默认值。
         }
         return config;
+    }
+
+    /** 一次性改写旧映射状态，保留变量、精度及其他配置字段；运行时不再维护启用状态。 */
+    private Map<?, ?> migrateMappingState(Path file, Map<?, ?> root, boolean requireSaved) throws IOException {
+        if (!(root.get("dataExtraction") instanceof Map<?, ?> extraction)
+                || !(extraction.get("bindings") instanceof List<?> items)
+                || items.stream().noneMatch(item -> item instanceof Map<?, ?> binding && binding.containsKey("enabled"))) return root;
+        List<Object> converted = new java.util.ArrayList<>();
+        for (Object item : items) {
+            if (!(item instanceof Map<?, ?> binding)) { converted.add(item); continue; }
+            if (Boolean.FALSE.equals(binding.get("enabled"))) continue;
+            Map<Object, Object> next = new LinkedHashMap<>(binding); next.remove("enabled"); converted.add(next);
+        }
+        Map<Object, Object> nextExtraction = new LinkedHashMap<>(extraction);
+        nextExtraction.put("version", 3); nextExtraction.put("bindings", converted);
+        Map<Object, Object> nextRoot = new LinkedHashMap<>(root); nextRoot.put("dataExtraction", nextExtraction);
+        try { AtomicConfigWriter.write(file, JsonData.stringify(nextRoot)); }
+        catch (IOException failure) {
+            if (requireSaved) throw failure;
+            // 只读/被占用的旧文件也按转换后的内容读取，不丢失变量或重新启用旧映射。
+            java.util.logging.Logger.getLogger(TemplateConfigStore.class.getName())
+                    .log(java.util.logging.Level.WARNING, "旧映射配置暂时无法保存，下一次读取将重试：" + file, failure);
+        }
+        return nextRoot;
+    }
+
+    /** 启动时转换全部旧配置，未打开的模板也不再保留停用映射。 */
+    public void migrateLegacyMappingStates() throws IOException {
+        if (!Files.isDirectory(configDir)) return;
+        try (var paths = Files.walk(configDir)) {
+            for (Path file : paths.filter(p -> Files.isRegularFile(p, java.nio.file.LinkOption.NOFOLLOW_LINKS)
+                    && p.getFileName().toString().endsWith(".json")).toList()) {
+                String text = Files.readString(file, StandardCharsets.UTF_8);
+                Object parsed;
+                try { parsed = JsonData.parse(text); } catch (IOException invalidJson) { continue; }
+                if (parsed instanceof Map<?, ?> root) migrateMappingState(file, root, true);
+            }
+        }
     }
 
     /** 合并写入，保留当前模板里暂时不存在的旧变量。 */

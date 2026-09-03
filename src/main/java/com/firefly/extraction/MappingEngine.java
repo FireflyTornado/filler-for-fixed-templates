@@ -10,27 +10,32 @@ public final class MappingEngine {
                           String status, String error, boolean apply, boolean formula, Match match) { }
 
     public List<Preview> preview(SpreadsheetData book, MappingProfile profile,
-                                Map<String, VariableInputState> variables, String activeSheet, int recordRow,
+                                Map<String, VariableInputState> variables, String activeSheet, int recordRow, int recordColumn,
                                 Set<MappingProfile.Binding> confirmedFixed, Runnable checkpoint) {
         List<Preview> result = new ArrayList<>();
         for (var entry : variables.entrySet()) {
             checkpoint.run();
             String name = entry.getKey(); VariableInputState variable = entry.getValue();
             MappingProfile.Binding b = profile.get(name);
-            if (b == null || !b.enabled()) {
-                result.add(new Preview(name, "手工填写", "", "", variable.value(), b == null ? "手工填写" : "已停用", "", false, false, null)); continue;
+            if (b == null) {
+                result.add(new Preview(name, "手工填写", "", "", variable.value(), "手工填写", "", false, false, null)); continue;
             }
+            Match match = null;
+            SpreadsheetData.Cell cell = SpreadsheetData.Cell.EMPTY;
+            String source = b.sheet() + " / " + SpreadsheetData.address(b.row(), b.column());
             try {
                 if (book == null) throw new IllegalArgumentException("请先打开 Excel 文件");
-                Match match = resolve(book, b, activeSheet, recordRow, confirmedFixed.contains(b), checkpoint);
-                SpreadsheetData.Cell cell = match.sheet().cell(match.row(), match.column());
-                String source = match.sheet().name() + " / " + SpreadsheetData.address(match.row(), match.column());
+                match = resolve(book, b, activeSheet, recordRow, recordColumn, confirmedFixed.contains(b), checkpoint);
+                cell = match.sheet().cell(match.row(), match.column());
+                source = match.sheet().name() + " / " + SpreadsheetData.address(match.row(), match.column());
                 if (!cell.error().isEmpty()) throw new IllegalArgumentException(cell.error());
                 if (cell.blank()) {
                     if (b.emptyPolicy() == MappingProfile.EmptyPolicy.KEEP) {
-                        result.add(new Preview(name, source, "", "", variable.value(), "空值：保留原值", "", false, cell.formula(), match)); continue;
+                        String note = variable.type() == VariableType.NUMBER ? "来源为空，已保留原值" : "提示：来源为空，已保留原文";
+                        result.add(new Preview(name, source, "", "", variable.value(), note, "", false, cell.formula(), match)); continue;
                     }
-                    if (b.emptyPolicy() != MappingProfile.EmptyPolicy.CLEAR || variable.type() == VariableType.NUMBER) throw new IllegalArgumentException("来源为空，请选择保留原值或重新绑定");
+                    if (variable.type() != VariableType.NUMBER) throw new IllegalArgumentException("来源为空，文本变量不能按“空值取0”处理；请选择“空值保留原值”");
+                    result.add(new Preview(name, source, "", "0", variable.value(), "来源为空，将填入 0", "", true, cell.formula(), match)); continue;
                 }
                 String value = cell.display();
                 if (variable.type() == VariableType.NUMBER) {
@@ -43,7 +48,7 @@ public final class MappingEngine {
                 if (!match.note().isEmpty()) status += " · " + match.note();
                 result.add(new Preview(name, source, cell.display(), value, variable.value(), status, "", true, cell.formula(), match));
             } catch (IllegalArgumentException e) {
-                result.add(new Preview(name, b.sheet() + " / " + SpreadsheetData.address(b.row(), b.column()), "", "", variable.value(), "需要处理", e.getMessage(), false, false, null));
+                result.add(new Preview(name, source, cell.display(), "", variable.value(), "需要处理", e.getMessage(), false, cell.formula(), match));
             }
         }
         return List.copyOf(result);
@@ -54,18 +59,38 @@ public final class MappingEngine {
         if (row < 0 || column < 0 || row >= sheet.rows() || column >= sheet.columns()) throw new IllegalArgumentException("请选择有效单元格");
         String rowTitle = SpreadsheetData.normalize(sheet.cell(row, titleColumn).display());
         String colTitle = SpreadsheetData.normalize(sheet.cell(headerRow, column).display());
-        if (mode != MappingProfile.Mode.FIXED && colTitle.isBlank()) throw new IllegalArgumentException("所选列没有标题，请检查表头行设置");
+        if ((mode == MappingProfile.Mode.TITLES || mode == MappingProfile.Mode.RECORD) && colTitle.isBlank()) throw new IllegalArgumentException("所选列没有标题，请检查“列标题所在行”设置");
         if (mode == MappingProfile.Mode.TITLES && (rowTitle.isBlank() || row == headerRow || column == titleColumn)) throw new IllegalArgumentException("请选择行标题、列标题交叉处的数据单元格");
-        if (mode == MappingProfile.Mode.RECORD && row <= headerRow) throw new IllegalArgumentException("当前记录必须位于表头之后");
+        if (mode == MappingProfile.Mode.RECORD && row <= headerRow) throw new IllegalArgumentException("选定行必须位于表头之后");
+        if (mode == MappingProfile.Mode.COLUMN_RECORD && (rowTitle.isBlank() || column <= titleColumn)) throw new IllegalArgumentException("请检查“行标题所在列”设置；所选行需要标题，选定列必须位于标题右侧");
         return new MappingProfile.Binding(variable, sheet.name(), mode, headerRow, titleColumn, row, column,
-                rowTitle, colTitle, sheet.headers(headerRow), column == titleColumn ? "" : rowTitle, policy, true);
+                rowTitle, colTitle, mode == MappingProfile.Mode.COLUMN_RECORD ? sheet.rowTitles(titleColumn) : sheet.headers(headerRow),
+                column == titleColumn ? "" : rowTitle, policy);
     }
 
-    public Match resolve(SpreadsheetData book, MappingProfile.Binding binding, String activeSheet, int recordRow,
+    public Match resolve(SpreadsheetData book, MappingProfile.Binding binding, String activeSheet, int recordRow, int recordColumn,
                          boolean confirmedFixed, Runnable checkpoint) {
         List<Match> candidates = new ArrayList<>();
         for (SpreadsheetData.Sheet sheet : book.sheets()) {
             checkpoint.run();
+            if (binding.mode() == MappingProfile.Mode.COLUMN_RECORD) {
+                if (!sheet.name().equals(activeSheet) || recordColumn < 0 || recordColumn >= sheet.columns()) continue;
+                Map<Integer, List<String>> titleContexts = new HashMap<>();
+                for (var entry : sheet.cells().entrySet()) {
+                    checkpoint.run();
+                    if (!SpreadsheetData.normalize(entry.getValue().display()).equals(binding.rowTitle())) continue;
+                    int r = (int) (entry.getKey() >> 32), c = (int) (long) entry.getKey();
+                    if (recordColumn <= c) continue;
+                    List<String> titles = titleContexts.computeIfAbsent(c, sheet::rowTitles);
+                    // 纵向合并或重复行标题都不能唯一指向一行。
+                    if (titles.stream().filter(binding.rowTitle()::equals).count() != 1) continue;
+                    Set<String> context = new HashSet<>(binding.headers());
+                    context.remove(""); context.remove(binding.rowTitle());
+                    if (!context.isEmpty() && titles.stream().noneMatch(context::contains)) continue;
+                    candidates.add(new Match(sheet, r, recordColumn, moved(binding, r, recordColumn)));
+                }
+                continue;
+            }
             if (binding.mode() == MappingProfile.Mode.FIXED) {
                 boolean anchors = binding.headers().stream().anyMatch(s -> !s.isBlank()) || !binding.fixedRowTitle().isBlank();
                 boolean same = sheet.headers(binding.headerRow()).equals(binding.headers())
@@ -112,7 +137,7 @@ public final class MappingEngine {
         List<Match> named = candidates.stream().filter(m -> m.sheet().name().equals(binding.sheet())).toList();
         if (!named.isEmpty()) candidates = named;
         if (candidates.size() != 1) throw new IllegalArgumentException(candidates.isEmpty()
-                ? "结构或标题不匹配，请重新绑定；当前记录模式还需选择对应工作表和数据行"
+                ? "结构或标题不匹配，请重新绑定；锁定行／列模式还需选择对应工作表及有效的选定行列"
                 : "找到多个同名标题或相似工作表，请重新指定来源");
         return candidates.get(0);
     }
