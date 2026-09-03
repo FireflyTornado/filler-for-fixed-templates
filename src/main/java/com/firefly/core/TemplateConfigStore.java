@@ -78,6 +78,7 @@ public final class TemplateConfigStore {
             if (!Files.isRegularFile(file)) return config;
             Object parsed = JsonData.parse(Files.readString(file, StandardCharsets.UTF_8));
             if (!(parsed instanceof Map<?, ?> root)) return config;
+            config.setDataExtraction(com.firefly.extraction.MappingProfile.fromJson(root.get("dataExtraction")));
             Object decimalPlaces = root.get("decimalPlaces");
             if (decimalPlaces instanceof Number number) {
                 double raw = number.doubleValue();
@@ -162,7 +163,7 @@ public final class TemplateConfigStore {
 
     public void saveConfig(TemplateConfig config) throws IOException {
         Map<String, Object> root = new LinkedHashMap<>();
-        root.put("version", 3);
+        root.put("version", 4);
         root.put("template", config.templateName());
         root.put("decimalPlaces", config.decimalPlaces());
         Map<String, Object> variables = new LinkedHashMap<>();
@@ -175,7 +176,15 @@ public final class TemplateConfigStore {
             variables.put(item.getKey(), data);
         }
         root.put("variables", variables);
+        root.put("dataExtraction", config.dataExtraction().toJson());
         AtomicConfigWriter.write(configFileForTemplate(config.templateName()), JsonData.stringify(root));
+    }
+
+    /** 重新读取当前配置后只合并映射，避免覆盖变量自动保存的结果。 */
+    public void saveMapping(String templateName, com.firefly.extraction.MappingProfile profile) throws IOException {
+        TemplateConfig config = load(templateName);
+        config.setDataExtraction(profile);
+        saveConfig(config);
     }
 
     /** 随模板重命名其配置文件；没有配置文件时无需创建空配置。 */

@@ -7,6 +7,7 @@ import com.firefly.ui.ResultPanel;
 import com.firefly.ui.VariableInputPanel;
 import com.firefly.ui.IssueSeverity;
 import com.firefly.ui.TemplateHelpDialog;
+import com.firefly.ui.AboutDialog;
 import com.firefly.ui.ValidationIssue;
 import com.firefly.ui.ValidationIssueManager;
 import com.firefly.ui.FontScalePreset;
@@ -14,6 +15,7 @@ import com.firefly.ui.UiFontManager;
 import com.firefly.ui.FileTaskManager;
 import com.firefly.ui.FileTaskProgressPanel;
 import com.firefly.ui.TemplateBusyLayerUI;
+import com.firefly.ui.DataExtractionPanel;
 
 import javax.swing.*;
 import javax.swing.Timer;
@@ -55,7 +57,7 @@ public final class TemplateToolApp extends JFrame {
     private VariableInputPanel variablePanel;
     private ResultPanel resultPanel;
     private JButton chooseBtn, openFolderBtn, newBtn, saveTplBtn, generateBtn, copyBtn, saveResultBtn, helpBtn;
-    private JButton refreshTemplateBtn, fontScaleBtn;
+    private JButton refreshTemplateBtn, fontScaleBtn, aboutBtn;
     private TitledBorder templateBorder;
     private JPanel templatePanel;
     private JSplitPane mainSplit, previewResultSplit;
@@ -63,6 +65,8 @@ public final class TemplateToolApp extends JFrame {
     private FileTaskManager fileTasks;
     private TemplateBusyLayerUI templateBusyLayerUI;
     private JLayer<JComponent> templateBusyLayer;
+    private JTabbedPane tabs;
+    private DataExtractionPanel extractionPanel;
 
     private String lastDiskContent = "";
     private boolean currentTemplateSaved, docxMode, resultValid, currentResultDocx, programmaticUpdate;
@@ -72,6 +76,7 @@ public final class TemplateToolApp extends JFrame {
     /** 本次运行中已从模板文件确认过的变量集合；退出时只检查这些模板。 */
     private final Map<String, Set<String>> checkedTemplateVariables = new LinkedHashMap<>();
     private TemplateHelpDialog helpDialog;
+    private AboutDialog aboutDialog;
     private String fullStatusText = " ";
     private FontScalePreset fontScalePreset;
     private boolean initializationScheduled;
@@ -127,6 +132,11 @@ public final class TemplateToolApp extends JFrame {
         JPanel root = new JPanel(new BorderLayout(6, 6));
         root.setBorder(BorderFactory.createEmptyBorder(8, 8, 6, 8));
         setContentPane(root);
+        aboutBtn = new JButton("关于");
+        aboutBtn.setMargin(new Insets(2, 8, 2, 8));
+        aboutBtn.setToolTipText("关于本程序、许可证及第三方依赖");
+        aboutBtn.getAccessibleContext().setAccessibleName("关于程序与许可证");
+        aboutBtn.addActionListener(e -> showAbout());
         JPanel left = buildLeftPane(), right = buildRightPane();
         left.setMinimumSize(new Dimension(300, 500));
         right.setMinimumSize(new Dimension(340, 500));
@@ -135,8 +145,26 @@ public final class TemplateToolApp extends JFrame {
         mainSplit.setContinuousLayout(true);
         mainSplit.setOneTouchExpandable(true);
         templateBusyLayerUI = new TemplateBusyLayerUI();
-        templateBusyLayer = new JLayer<>(mainSplit, templateBusyLayerUI);
-        root.add(templateBusyLayer, BorderLayout.CENTER);
+        WorkspaceTabs workspaceTabs = new WorkspaceTabs();
+        tabs = workspaceTabs;
+        tabs.addTab("模板填充", mainSplit);
+        templateBusyLayer = new JLayer<>(tabs, templateBusyLayerUI);
+        JLayeredPane workspace = new JLayeredPane() {
+            @Override public void doLayout() {
+                Dimension buttonSize = aboutBtn.getPreferredSize();
+                workspaceTabs.reserveHeaderWidth(buttonSize.width + 8);
+                templateBusyLayer.setBounds(0, 0, getWidth(), getHeight());
+                templateBusyLayer.doLayout();
+                tabs.doLayout();
+                Rectangle selectedTab = tabs.getBoundsAt(tabs.getSelectedIndex());
+                int height = Math.min(buttonSize.height, selectedTab.height);
+                aboutBtn.setBounds(getWidth() - buttonSize.width - 2,
+                        selectedTab.y + (selectedTab.height - height) / 2, buttonSize.width, height);
+            }
+        };
+        workspace.add(templateBusyLayer, JLayeredPane.DEFAULT_LAYER);
+        workspace.add(aboutBtn, JLayeredPane.PALETTE_LAYER);
+        root.add(workspace, BorderLayout.CENTER);
         JPanel statusBar = new JPanel(new BorderLayout(6, 0));
         statusBar.setBorder(BorderFactory.createCompoundBorder(
                 BorderFactory.createMatteBorder(1, 0, 0, 0, Color.LIGHT_GRAY),
@@ -162,6 +190,48 @@ public final class TemplateToolApp extends JFrame {
         statusActions.add(fontScaleBtn);
         statusBar.add(statusActions, BorderLayout.EAST);
         root.add(statusBar, BorderLayout.SOUTH);
+        extractionPanel = new DataExtractionPanel(session, templateConfigStore, appConfig, fileTasks,
+                () -> saveAppConfig(false), this::chooseTemplate, this::syncTemplate,
+                () -> tabs.setSelectedIndex(0));
+        tabs.addTab("数据提取", extractionPanel);
+        tabs.addChangeListener(e -> {
+            getRootPane().setDefaultButton(tabs.getSelectedIndex() == 0 ? generateBtn : null);
+            if (tabs.getSelectedIndex() == 1) { syncTemplate(); extractionPanel.templateChanged(); }
+        });
+    }
+
+    /** Reserve only the tab strip's trailing space while retaining the native tab appearance. */
+    private static final class WorkspaceTabs extends JTabbedPane {
+        private int headerReserve;
+        private boolean layingOutHeader;
+
+        WorkspaceTabs() { super(TOP, SCROLL_TAB_LAYOUT); }
+
+        @Override public Insets getInsets() {
+            Insets insets = super.getInsets();
+            if (layingOutHeader) insets.right += headerReserve;
+            return insets;
+        }
+
+        @Override public void doLayout() {
+            // Let the native layout position tabs and overflow arrows in the available strip.
+            layingOutHeader = true;
+            try { super.doLayout(); }
+            finally { layingOutHeader = false; }
+            // Swing anchors overflow buttons to the outer edge, ignoring the right inset.
+            for (Component child : getComponents()) {
+                if (child instanceof JButton && indexOfComponent(child) < 0 && child.isVisible()) {
+                    child.setLocation(child.getX() - headerReserve, child.getY());
+                }
+            }
+            // Content and its painted border still occupy the entire workspace width.
+            for (int i = 0; i < getTabCount(); i++) {
+                Component page = getComponentAt(i);
+                if (page != null) page.setSize(page.getWidth() + headerReserve, page.getHeight());
+            }
+        }
+
+        void reserveHeaderWidth(int width) { headerReserve = width; }
     }
 
     private JPanel buildLeftPane() {
@@ -268,6 +338,7 @@ public final class TemplateToolApp extends JFrame {
                     ? "小数位数已改为 " + session.decimalPlaces() + " 位，请重新生成。"
                     : "内容已修改，请重新生成。");
             templateConfigSaveTimer.restart();
+            if (extractionPanel != null) extractionPanel.variablesChanged();
             if (change != TemplateSession.Change.DECIMAL_PLACES && helpDialog != null) {
                 helpDialog.refreshIfVisible();
             }
@@ -288,7 +359,9 @@ public final class TemplateToolApp extends JFrame {
         bind(root, KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_ENTER,
                 java.awt.event.KeyEvent.CTRL_DOWN_MASK), "generate", this::generate);
         bind(root, KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_S,
-                java.awt.event.KeyEvent.CTRL_DOWN_MASK), "saveTemplate", this::saveTemplate);
+                java.awt.event.KeyEvent.CTRL_DOWN_MASK), "saveTemplate", () -> {
+                    if (tabs.getSelectedIndex() == 0) saveTemplate(); else extractionPanel.flushMappings();
+                });
         bind(root, KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_F1, 0), "help", this::showHelp);
         bind(root, KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_F4, 0),
                 "nextError", variablePanel::locateNextIssue);
@@ -381,6 +454,7 @@ public final class TemplateToolApp extends JFrame {
         try { variablePanel.rebuild(session.variables()); }
         finally { programmaticUpdate = false; }
         if (helpDialog != null) helpDialog.refreshIfVisible();
+        if (extractionPanel != null) extractionPanel.templateChanged();
     }
 
     private record LoadedTemplate(String name, boolean word, String text,
@@ -390,6 +464,7 @@ public final class TemplateToolApp extends JFrame {
 
     private void loadTemplateAsync(String name, Runnable afterSuccess) {
         if (name == null || name.isBlank()) return;
+        if (!extractionPanel.flushMappings()) return;
         templateConfigSaveTimer.stop();
         if (!session.templateName().isEmpty() && !saveCurrentTemplateConfig(true)) return;
         boolean word = DocxProcessor.isDocxName(name);
@@ -588,6 +663,7 @@ public final class TemplateToolApp extends JFrame {
     }
 
     private void promptRenameCurrentTemplate() {
+        if (!extractionPanel.flushMappings()) return;
         if (session.templateName().isEmpty()) return;
         String oldName = session.templateName();
         String oldFileName = templateStore.templateFile(oldName).getFileName().toString();
@@ -653,6 +729,7 @@ public final class TemplateToolApp extends JFrame {
                     Set<String> checked = checkedTemplateVariables.remove(renamed.oldName());
                     if (checked != null) checkedTemplateVariables.put(renamed.newName(), checked);
                     session.rename(renamed.newName(), templateConfigStore.load(renamed.newName()));
+                    extractionPanel.templateChanged();
                     rememberTemplate(renamed.newName());
                     updateDirtyIndicator();
                     setStatus("模板已重命名为：" + renamed.newName());
@@ -661,6 +738,7 @@ public final class TemplateToolApp extends JFrame {
     }
 
     private void promptNewTemplateName() {
+        if (!extractionPanel.flushMappings()) return;
         if (!confirmCancelGeneration("新建模板")) return;
         String name = JOptionPane.showInputDialog(this, "请输入新模板文件名（仅支持 .txt）：", "新建模板", JOptionPane.PLAIN_MESSAGE);
         if (name == null) return;
@@ -759,6 +837,7 @@ public final class TemplateToolApp extends JFrame {
     }
 
     private void closeApplication() {
+        if (!extractionPanel.flushMappings()) return;
         if (fileTasks.hasActiveTasks()) {
             if (fileTasks.hasNonCancellableTasks()) {
                 showWarning("当前文件任务正在完成不可中断的写入，请等待进度条完成后再退出。",
@@ -926,6 +1005,7 @@ public final class TemplateToolApp extends JFrame {
     }
 
     private void generate() {
+        if (tabs != null && tabs.getSelectedIndex() != 0) return;
         if (fileTasks.hasTask(TASK_GENERATE)) {
             int choice = JOptionPane.showConfirmDialog(this,
                     "已有结果正在生成。是否取消当前任务，并使用现在的内容重新生成？",
@@ -1067,7 +1147,7 @@ public final class TemplateToolApp extends JFrame {
                         TextFileWriter.writeText(file.toPath(), text);
                         progress.update(FileOperationText.SAVE_RESULT.inProgress(), 100, 100);
                         return file;
-                    }, saved -> setStatus("结果已保存。", "结果已保存到：" + saved.getAbsolutePath()),
+                    }, this::resultExported,
                     error -> showError("无法写入文件：\n" + error, "保存失败"),
                     () -> setStatus("保存结果已取消。"));
             return;
@@ -1086,18 +1166,32 @@ public final class TemplateToolApp extends JFrame {
                         copyWithProgress(source, file.toPath(), progress,
                                 FileOperationText.SAVE_RESULT.inProgress());
                         return file;
-                    }, saved -> setStatus("结果已保存。", "结果已保存到：" + saved.getAbsolutePath()),
+                    }, this::resultExported,
                     error -> showError("无法写入文件：\n" + error, "保存失败"),
                     () -> setStatus("保存结果已取消。"));
             return;
         }
     }
 
-    private static JFileChooser resultChooser(String title, String name, String description, String ext) {
-        JFileChooser chooser = new JFileChooser(Path.of("").toAbsolutePath().toFile());
-        chooser.setDialogTitle(title); chooser.setSelectedFile(new File(name));
+    private JFileChooser resultChooser(String title, String name, String description, String ext) {
+        Path directory = Path.of("").toAbsolutePath();
+        try { if (appConfig.lastExportDirectory() != null && Files.isDirectory(Path.of(appConfig.lastExportDirectory()))) directory = Path.of(appConfig.lastExportDirectory()); }
+        catch (RuntimeException ignored) { }
+        JFileChooser chooser = new JFileChooser(directory.toFile());
+        chooser.setDialogTitle(title); chooser.setSelectedFile(directory.resolve(name).toFile());
         chooser.setFileFilter(new FileNameExtensionFilter(description, ext)); chooser.setAcceptAllFileFilterUsed(false);
         return chooser;
+    }
+
+    private void resultExported(File file) {
+        appConfig.setLastExportDirectory(file.toPath().toAbsolutePath().getParent().toString());
+        saveAppConfig(false);
+        setStatus("结果已保存。", "结果已保存到：" + file.getAbsolutePath());
+    }
+
+    @Override public void dispose() {
+        if (extractionPanel != null) extractionPanel.disposePanel();
+        super.dispose();
     }
     private File withRequiredExtension(File file, String required) {
         String ext = extensionOf(file.getName());
@@ -1225,6 +1319,11 @@ public final class TemplateToolApp extends JFrame {
     private static void retireTemporaryResult(Path path) {
         if (path != null) path.toFile().deleteOnExit();
     }
+    private void showAbout() {
+        if (aboutDialog == null) aboutDialog = new AboutDialog(this);
+        aboutDialog.showDialog();
+    }
+
     private void showHelp() {
         if (helpDialog == null) {
             helpDialog = new TemplateHelpDialog(this, () -> templateText.getText(),

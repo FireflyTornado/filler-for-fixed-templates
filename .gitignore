@@ -1,35 +1,42 @@
-# ---- 构建产物 ----
+# ---- 构建产物与构建/验证临时目录 ----
 /out/
 /out-test/
 /work/
+/TemplateTool.jar
+/manifest.tmp
 *.class
-manifest.tmp
 
-# ---- IDE / 编辑器 ----
+# ---- 自动下载的依赖缓存（含 JAR、下载中间文件和并发锁）----
+# dependencies.lock.json 是版本及校验依据，必须提交，不要忽略。
+/lib/
+
+# ---- 用户运行数据（仅限项目根目录，测试样例不受影响）----
+/Templates/
+/Config/
+/config.json
+/last_values.json
+# 配置原子写入在中断后可能留下的临时文件。
+/config.json*.tmp
+/last_values.json*.tmp
+
+# ---- 日志与 JVM 崩溃诊断 ----
+*.log
+
+# ---- IDE / 编辑器本地配置与临时文件 ----
 .idea/
 *.iml
 *.ipr
 *.iws
-
 .classpath
 .project
 .settings/
-
 .vscode/
+*.swp
+*.swo
+*~
 
-# ---- 运行期状态----
-last_values.json
-config.json
-Config/
-Templates/
-
-# ---- 日志 ----
-*.log
-
-# ---- 操作系统 ----
+# ---- 操作系统生成的文件 ----
 Thumbs.db
+ehthumbs.db
 Desktop.ini
 .DS_Store
-
-# ---- 编译成品 ----
-TemplateTool.jar

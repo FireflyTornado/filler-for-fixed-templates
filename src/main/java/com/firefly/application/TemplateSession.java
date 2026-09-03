@@ -20,6 +20,19 @@ public final class TemplateSession {
     private int decimalPlaces = NumericFormatter.DEFAULT_DECIMAL_PLACES;
     private long templateRevision, inputRevision;
     private Consumer<Change> changeListener = change -> { };
+    public record Source(String location, String importedValue, VariableType type) { }
+    private record Undo(VariableInputState before, Source previousSource, String appliedValue, VariableType type) { }
+    private final Map<String, Source> sources = new LinkedHashMap<>();
+    private final Map<String, Undo> undo = new LinkedHashMap<>();
+
+    public String sourceDescription(String name) {
+        Source source = sources.get(name);
+        VariableInputState current = variables.get(name);
+        if (source == null || current == null) return "";
+        boolean edited = !source.importedValue().equals(current.value()) || source.type() != current.type();
+        return "来源：" + source.location() + "；导入值：" + source.importedValue() + (edited ? "；当前已手工修改" : "");
+    }
+    public boolean canUndoImport() { return !undo.isEmpty(); }
 
     public String templateName() { return templateName; }
     public String templateText() { return templateText; }
@@ -34,6 +47,7 @@ public final class TemplateSession {
     /** 成功加载或新建时才调用；刷新同名模板也开启新会话。 */
     public void load(String name, String text, TemplateConfig config, TemplateParser.ParsedTemplate parsed) {
         sessionVariables.clear();
+        sources.clear(); undo.clear();
         templateName = name;
         replaceTemplate(text, config, parsed);
     }
@@ -62,6 +76,7 @@ public final class TemplateSession {
         TemplateConfig copy = new TemplateConfig(config.templateName());
         copy.setDecimalPlaces(config.decimalPlaces());
         copy.variables().putAll(config.variables());
+        copy.setDataExtraction(config.dataExtraction());
         persistedConfig = copy;
     }
 
@@ -135,6 +150,15 @@ public final class TemplateSession {
      * 本方法不推断类型、不执行 Excel 映射，也不覆盖内置日期变量。
      */
     public void applyValues(Map<String, String> incoming) {
+        applyValues(incoming, null);
+    }
+
+    /** 来源和撤销信息与变量值在同一次变更通知之前提交。 */
+    public void applyImportedValues(Map<String, String> incoming, Map<String, String> locations) {
+        applyValues(incoming, Objects.requireNonNull(locations));
+    }
+
+    private void applyValues(Map<String, String> incoming, Map<String, String> locations) {
         Map<String, String> updates = new LinkedHashMap<>(Objects.requireNonNull(incoming));
         for (Map.Entry<String, String> entry : updates.entrySet()) {
             VariableInputState state = requireVariable(entry.getKey());
@@ -145,8 +169,34 @@ public final class TemplateSession {
             }
         }
         if (updates.isEmpty()) return;
+        if (locations != null) {
+            for (String name : updates.keySet()) Objects.requireNonNull(locations.get(name), "缺少来源：" + name);
+            undo.clear();
+            updates.forEach((name, value) -> {
+                VariableInputState current = variables.get(name);
+                undo.put(name, new Undo(current.copy(), sources.get(name), value, current.type()));
+                sources.put(name, new Source(locations.get(name), value, current.type()));
+            });
+        }
         updates.forEach((name, value) -> variables.get(name).setValue(value));
         changed(Change.BATCH);
+    }
+
+    /** 只撤销仍等于本次导入值的变量；用户后续编辑的冲突项保持原值。 */
+    public Set<String> undoImport() {
+        Set<String> conflicts = new LinkedHashSet<>(); boolean applied = false;
+        for (var entry : undo.entrySet()) {
+            String name = entry.getKey(); Undo previous = entry.getValue(); VariableInputState current = variables.get(name);
+            if (current == null || current.type() != previous.type() || current.numericLocked() != previous.before().numericLocked()
+                    || !current.value().equals(previous.appliedValue())) { conflicts.add(name); continue; }
+            VariableInputState restored = previous.before().copy();
+            variables.put(name, restored); sessionVariables.put(name, restored);
+            if (previous.previousSource() == null) sources.remove(name); else sources.put(name, previous.previousSource());
+            applied = true;
+        }
+        undo.clear();
+        if (applied) changed(Change.BATCH);
+        return Collections.unmodifiableSet(conflicts);
     }
 
     private VariableInputState requireVariable(String name) {

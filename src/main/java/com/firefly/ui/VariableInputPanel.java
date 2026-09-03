@@ -171,6 +171,7 @@ public final class VariableInputPanel extends JPanel {
         warning.getAccessibleContext().setAccessibleName("输入错误");
         Row row = new Row(state, type, field, expand, warning,
                 field.getBackground(), field.getBorder(), order);
+        row.nameLabel = name;
         rowByName.put(state.name(), row);
         name.setLabelFor(field);
         field.getAccessibleContext().setAccessibleName("变量“" + state.name() + "”的值");
@@ -314,6 +315,9 @@ public final class VariableInputPanel extends JPanel {
     }
 
     private void validateRow(Row row) {
+        String source = session.sourceDescription(row.state.name());
+        row.nameLabel.setText(row.state.name() + (source.isEmpty() ? "" : " ↗"));
+        row.nameLabel.setToolTipText(source.isEmpty() ? row.state.name() + " — " + syntaxTooltip(row.state) : source);
         boolean invalid = row.state.type() == VariableType.NUMBER
                 && (row.state.requiresNumericAttention()
                 || ValueNormalizer.normalize(row.state.value()) == null);
@@ -405,10 +409,11 @@ public final class VariableInputPanel extends JPanel {
         String compact = value.replace("\r\n", "↵ ").replace("\r", "↵ ").replace("\n", "↵ ");
         return compact.length() <= 120 ? compact : compact.substring(0, 117) + "…";
     }
-    private static String valueTooltip(VariableInputState state) {
-        if (state.type() != VariableType.MULTILINE_TEXT) return null;
+    private String valueTooltip(VariableInputState state) {
+        String source = session.sourceDescription(state.name());
+        if (state.type() != VariableType.MULTILINE_TEXT) return source.isEmpty() ? null : source;
         int lines = state.value().isEmpty() ? 0 : state.value().split("\\R", -1).length;
-        return "共 " + lines + " 行 / " + state.value().length() + " 个字符";
+        return "共 " + lines + " 行 / " + state.value().length() + " 个字符" + (source.isEmpty() ? "" : "；" + source);
     }
     private static String syntaxTooltip(VariableInputState state) {
         String syntax = "{{变量}}";
@@ -423,6 +428,7 @@ public final class VariableInputPanel extends JPanel {
     }
 
     private static final class Row {
+        JLabel nameLabel;
         VariableInputState state;
         final JComboBox<VariableType> type;
         final JTextField field;

@@ -7,5 +7,7 @@ public final class AllTests {
     public static void main(String[] args) throws Exception {
         TemplateFeatureTests.main(args);
         ApplicationTests.main(args);
+        com.firefly.extraction.ExtractionTests.main(args);
+        com.firefly.bootstrap.BootstrapTests.main(args);
     }
 }

@@ -10,7 +10,7 @@ import java.security.CodeSource;
 import java.security.ProtectionDomain;
 
 /**
- * 程序入口：设置高 DPI / 系统外观，然后启动主窗口。
+ * 依赖校验完成后的应用入口：由 bootstrap.Bootstrap 加载，再启动主窗口。
  */
 public final class Main {
 

@@ -168,7 +168,7 @@ public final class TemplateFeatureTests {
         state.activateType(VariableType.SHORT_TEXT, "摘要");
         store.save("demo.txt", Map.of("备注", state));
         String json = Files.readString(store.configFileForTemplate("demo.txt"));
-        assertTrue(json.contains("\"version\": 3"), "template config version");
+        assertTrue(json.contains("\"version\": 4"), "template config version");
         assertTrue(json.contains("\"decimalPlaces\": 2"), "default decimal places persisted");
         assertTrue(json.contains("\"type\": \"SHORT_TEXT\"") && json.contains("\"value\": \"摘要\""),
                 "active state persisted");

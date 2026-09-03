@@ -4,3 +4,6 @@
 # .bat 必须用 CRLF，否则 Windows cmd 在部分情况下会执行异常
 *.bat text eol=crlf
 *.cmd text eol=crlf
+
+# 许可原文统一保持 LF，避免检出时改写汇总中的来源与正文换行。
+src/main/resources/META-INF/THIRD_PARTY_LICENSES.txt text eol=lf

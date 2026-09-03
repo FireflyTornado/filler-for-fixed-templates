@@ -3,6 +3,8 @@ package com.firefly.application;
 import com.firefly.TemplateToolApp;
 import com.firefly.core.*;
 import com.firefly.ui.VariableInputPanel;
+import com.firefly.ui.AboutDialog;
+import com.firefly.ui.TemplateHelpDialog;
 
 import javax.swing.*;
 import javax.swing.Timer;
@@ -200,6 +202,34 @@ public final class ApplicationTests {
         Path dir = Files.createTempDirectory("window-session-");
         TemplateToolApp app = new TemplateToolApp(dir);
         try {
+            JButton aboutButton = field(app, "aboutBtn", JButton.class);
+            JTabbedPane appTabs = field(app, "tabs", JTabbedPane.class);
+            check(!SwingUtilities.isDescendingFrom(aboutButton, appTabs), "About button sits outside both workspace tabs");
+            check(aboutButton.isEnabled(), "About is available before template initialization");
+            aboutButton.doClick();
+            AboutDialog about = field(app, "aboutDialog", AboutDialog.class);
+            check(about.isVisible() && about.getOwner() == app, "About button opens an owned dialog");
+            JTabbedPane pages = field(about, "pages", JTabbedPane.class);
+            equal("本项目许可", pages.getTitleAt(0), "project license has its own page");
+            JTextArea projectLicense = (JTextArea) ((JScrollPane) pages.getComponentAt(0)).getViewport().getView();
+            check(!projectLicense.isEditable() && projectLicense.getText().contains("MIT License")
+                    && projectLicense.getText().contains("FireflyTornado"), "About displays the project's copyright and MIT license");
+            JTextArea thirdParty = (JTextArea) ((JScrollPane) pages.getComponentAt(1)).getViewport().getView();
+            check(thirdParty.getText().contains("curvesapi") && !thirdParty.getText().contains("**"), "About shows plain-text third-party overview");
+            JTextArea original = (JTextArea) ((JScrollPane) pages.getComponentAt(2)).getViewport().getView();
+            check(original.getText().contains("Component: SparseBitSet-1.3.jar")
+                    && original.getText().contains("Copyright (c) 2005, Graph Builder"), "About retains supplemental original licenses");
+            about.setVisible(false);
+            appTabs.setSelectedIndex(1);
+            aboutButton.doClick();
+            check(field(app, "aboutDialog", AboutDialog.class) == about && about.isVisible(), "About works from extraction and reuses its dialog");
+            about.setVisible(false);
+            appTabs.setSelectedIndex(0);
+            TemplateHelpDialog help = new TemplateHelpDialog(app, () -> "", Map::of);
+            try {
+                JTabbedPane helpTabs = (JTabbedPane) help.getContentPane().getComponent(0);
+                check(helpTabs.getTabCount() == 4, "Help contains only syntax, calculations, dates, and current variables");
+            } finally { help.dispose(); }
             TemplateSession session = field(app, "session", TemplateSession.class);
             String text = "{{数量}} {{备注}}";
             session.load("example.txt", text, new TemplateConfig("example.txt"), TemplateParser.parse(text));

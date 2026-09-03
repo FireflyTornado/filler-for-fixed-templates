@@ -1,270 +1,266 @@
 # Template Filler Tool
 
-> **Language: [中文](README.md)**
+[中文](README.md) · [Architecture and Development](PROJECT_STRUCTURE.md) · [Third-Party Notices](THIRD_PARTY_NOTICES.md)
 
-A lightweight Java Swing desktop tool with a unified variable system for filling text or Word templates, previewing results, and exporting them safely.
+## Overview
 
-## Features
+A Java Swing desktop application that fills text and Word templates with manually entered values or Excel data. It is intended for recurring documents such as notices, quotations, and reports with a fixed format.
 
-- **Split-pane workspace** → templates and results stay on the left, while the base date and unified variable form stay on the right; both dividers are draggable and their positions are restored on the next launch
-- **Unified variable input** → `{{variable}}` is the recommended syntax, and each variable can be Numeric, Short Text, or Multi-line Text; a blank numeric value is treated as 0, and `Tab` in a value field moves directly to the next variable value
-- **Legacy syntax migration** → when `[[variable]]` is found, it can be backed up and converted to `{{variable}}` in one click
-- **Compact multi-line editing** → multi-line values use a one-line preview in the main window and open in a modal “Expand…” editor
-- **Session draft protection** → Numeric, Short Text, and Multi-line Text keep independent values for the current template editing session; only the active type and value persist across sessions
-- **Adjustable UI text** → Follow System, Comfortable, Large, and Extra Large presets build on the Windows/JDK DPI-aware system fonts without applying DPI twice
-- **Unified decimal places** → use `−` / `+` in the variable form to keep 0–10 decimal places for the current template; numeric replacements and expression results share the same setting, defaulting to two places
-- **Calendar base date** → all built-in date variables use the calendar selection as their base; every launch starts with the current system date, and you can type `yyyy-MM-dd` or use the popup calendar to change it
-- **Complete date derivation** → supports day-only, month-only, year-month, full-date, and year output for relative days, months, and years, plus the first/last day of the base month, with automatic month, year, and leap-year handling
-- **Per-template configuration** → application state is stored in `config.json`, while each template keeps its own values, selected types, and decimal places under the mirrored path `Config/<template-relative-path>.json`; on exit, you can confirm cleanup of unused variables in templates checked during the current session
-- **Safe legacy migration** → existing `last_values.json` data is migrated once in read-only mode and the legacy file is never modified or deleted; new configuration writes use temporary files and atomic replacement where supported
-- **Generated-result protection** → changing the template, variable value, variable type, or base date immediately invalidates the old result and disables copying or saving it
-- **General background file tasks** → template initialization, loading, importing, saving, refreshing, and migration, plus result generation and export, run in the background; a fixed status-bar area shows the current phase, progress, and an always-present Cancel button, while operation-based status text stays consistent across TXT and DOCX files
-- **Safe template loading state** → switching or refreshing handles unsaved edits first, then locks the template workspace while progress is shown; success swaps the complete session at once, while failure or cancellation restores the previous template
-- **Error navigation and accessibility** → numeric and date errors update live with non-color indicators; use “Locate Error” or `F4` to cycle through them, plus `F1` for help, `Ctrl+Enter` to generate, and `Ctrl+S` to save the template
-- **Modeless help window** → includes syntax guidance, a calculation guide, every built-in date variable, and a live current-template variable inventory without blocking the main window
-- **Multi-template management** → template files with any names can be stored at any depth below `Templates/`; you can switch via "Choose Template File…", "New Template", save changes back to the corresponding file with "Save Template", and the last-used template is remembered and restored on next startup
-- **Synchronized rename** → click the template file name at the top of the window to rename it in place; its matching `Config` file is renamed at the same time
-- **Edit templates on the fly** → edit and save directly in the UI, or click "Open Folder" to edit with an external editor
-- **Manual template refresh** → reload the current template after editing it externally, with a warning before discarding unsaved in-app changes
-- **Word template support** → replace variables in the body, tables, headers/footers, footnotes/endnotes, comments, and text boxes while preserving character and paragraph formatting
+| Capability | Description |
+| --- | --- |
+| Template filling | Supports `.txt` and `.docx`; enter each named variable once |
+| Variables and calculations | Numbers, short text, multiline text, arithmetic expressions, and built-in dates |
+| Excel extraction | Preview `.xlsx` cells and map their values to template variables |
+| Reusable mappings | Match headers and row titles instead of binding rules to a workbook filename |
+| Output | Preview, copy text, or export files; Word output preserves template formatting |
+| Local persistence | Remember variable settings, mappings, layout, and previous open/export locations |
+
+Both tabs share the current template and variables. **Data Extraction only previews, maps, and applies values. Document generation takes place in Template Filling.** The application currently uses Chinese interface labels.
 
 ## Quick Start
 
-**Requirements**: Windows + JDK 17 or higher.
+### Requirements and launch
 
-**Run**:
+- Runtime: Windows with Java 17 or later, including desktop graphics support. A full JDK 17 or later also works.
+- Building from source: a full JDK 17 or later and Windows PowerShell. Maven and Gradle are not required.
+- Use a writable application directory for templates, configuration, and dependency downloads. Missing dependencies require access to Maven Central.
 
-1. Double-click `launcher.bat`
-2. Or run `java -jar TemplateTool.jar` in a command line
+If you already have `TemplateTool.jar`, double-click the adjacent `launcher.bat`, or run:
 
-**Edit templates**: templates are stored in `Templates/` or any nested folder and may be `.txt` or `.docx`. Text templates can be edited and saved directly in the app. Word templates are read-only in the app and must be edited in Word or another external editor, then refreshed or reopened. Clicking the template name at the top renames it in place and synchronizes its configuration. The rename field hides the extension and automatically preserves the existing `.txt` or `.docx`. "New Template" creates `.txt` files in the root `Templates` folder only.
-
-### Organizing Templates in File Explorer
-
-The app does not currently provide commands for moving templates, creating folders, bulk copying, or deleting files. Use **Open Folder**, or open the program's `Templates` directory directly in File Explorer. Exit the app before moving, bulk-renaming, or deleting files so it cannot save the current template or configuration back to an old path.
-
-#### Naming and path rules
-
-- Only `.txt` and `.docx` templates are supported; extension matching is case-insensitive. Other files are not included in template scans.
-- Templates may be stored at any depth under `Templates`. Names must be unique within one folder, while separate folders may contain templates with the same file name.
-- Do not begin a file or folder name with `.` because paths containing such a segment are treated as hidden and ignored.
-- For Windows compatibility, names must not contain `\ / : * ? " < > |`, be `.` or `..`, or end in a space or period. Avoid reserved names such as `CON`, `PRN`, `AUX`, `NUL`, `COM1`–`COM9`, and `LPT1`–`LPT9`.
-- A template is identified by its path relative to `Templates`. For example, `Contracts/Purchasing/Quote.txt` and `Contracts/Sales/Quote.txt` are independent templates.
-- Clicking the template name in the app only renames it within its current folder. The field does not show or require the extension; the existing `.txt` or `.docx` is retained automatically.
-
-#### Template-to-configuration mapping
-
-Saved variable values, variable types, and decimal places use a mirrored path below `Config`. The configuration name is the complete template file name followed by `.json`:
-
-| Template | Matching configuration |
-| --- | --- |
-| `Templates/Quote.txt` | `Config/Quote.txt.json` |
-| `Templates/Contracts/Purchasing/Quote.txt` | `Config/Contracts/Purchasing/Quote.txt.json` |
-| `Templates/Word/Notice.docx` | `Config/Word/Notice.docx.json` |
-
-A configuration file is optional. If none exists, the app uses defaults and creates the required `Config` folders and JSON file when settings are saved. Do not edit JSON contents manually or move the application-level `config.json` into `Config`.
-
-#### Common File Explorer operations
-
-- **Move**: move the template below `Templates`. To retain its values and settings, move its configuration to the exactly matching relative folder below `Config` as well.
-- **Rename externally**: keep the `.txt` or `.docx` extension, then rename the matching configuration to the template's new complete file name plus `.json`. Do this while the app is closed.
-- **Copy**: copying only the template creates an independent template with default settings. Copy and rename its configuration too if the clone should inherit existing values and settings.
-- **Delete**: delete the matching configuration as well to remove all saved values. If the configuration is retained, a future template created at that same relative path will reuse it.
-- **Move a category folder**: move the corresponding category folders under both `Templates` and `Config` to preserve every mapping inside that category.
-
-After organizing files, open the target with **Choose Template File…**. If the path remembered at startup no longer exists, select the template once at its new location; the app then remembers the new relative path.
-
-**Fill variables**: every variable name appears only once in the right-hand form. Ordinary variables can switch among all three types; expression variables remain Numeric. Use `−` / `+` at the top to adjust decimal places for the current template. Multi-line edits are committed only when the dialog is confirmed.
-
-**Keyboard shortcuts**: `Tab` in a variable value field moves to the next variable value; `Ctrl+Enter` generates the result, `Ctrl+S` saves a text template, `F1` opens help, and `F4` cycles through input errors. Auxiliary dialogs close with `Esc`.
-
-**Use a Word template**: use `{{variable}}` in Word. A `.docx` template is shown as a read-only preview. Export the generated document with “Save Result to File.”
-
-### File Tasks and Progress
-
-- Initialization, loading, importing, saving, refreshing, legacy-syntax conversion, result generation, and result export run as background file tasks, so long operations do not block the entire main window.
-- The status area uses operation-based labels such as “Load Template,” “Save Template,” and “Generate Result” instead of separate TXT and DOCX wording. These labels are defined centrally by `FileOperationText`.
-- The progress area has a fixed position and size. Its Cancel button is always present and is disabled automatically when the current task cannot be cancelled.
-- Loading, refreshing, or switching templates temporarily disables only the template-related workspace. A failed or cancelled load preserves the previous template and its input state.
-- You may continue editing the template, date, and variables during generation and may keep using an existing result. Each generation uses a snapshot captured when it starts; if inputs change before it finishes, the status explicitly marks the completed result as inconsistent with the current inputs.
-- If switching, creating, or refreshing a template would affect an active generation task, the app asks before cancelling it instead of interrupting it silently.
-
-## Variable Syntax
-
-### Ordinary variables
-
-Declare a variable with double braces:
-
-```text
-{{variable name}}
+```bat
+java -jar TemplateTool.jar
 ```
 
-The complete content between the braces is the variable name; surrounding whitespace is ignored. A numeric-only name is therefore valid for an ordinary variable:
+If you only have source code, build the JAR using the instructions below.
+
+### First document
+
+1. In Template Filling (`模板填充`), select a template or use New Template (`新建模板`) to create a text template.
+2. Add placeholders such as `{{客户}}` and `{{数量}}`, then save the template.
+3. Choose variable types, enter values, and check the base date and decimal places.
+4. Select Generate Result (`生成结果`), review the preview, then copy or save the result.
+
+For example:
 
 ```text
-Customer: {{customerName}}
-First item: {{1}}
-Notes: {{notes}}
+Customer: {{客户}}
+Date: {{今日年月日}}
+Quantity: {{数量}}, unit price: {{单价}}
+Amount: {{=数量*单价}}
+Notes: {{备注}}
 ```
 
-Each ordinary variable can use one of these input types:
+Set `客户` to short text and `备注` to multiline text. `数量` and `单价` are locked to numeric because the expression uses them. To populate values from Excel, follow the extraction workflow below.
 
-- **Numeric**: accepts decimal, fractional, and scientific notation; a blank value is treated as `0`; replacements are rounded to the template's decimal-place setting and padded with trailing zeros.
-- **Short Text**: inserted as entered and intended for one-line text.
-- **Multi-line Text**: preserves line breaks for notes or longer content.
+## How It Works
 
-Repeated occurrences of the same variable share one input field.
+### Startup and dependencies
 
-### Arithmetic expressions
+1. The JAR entry point reads its embedded dependency lock and verifies the adjacent `lib/` files with SHA-256.
+2. A complete local cache opens the application offline. Missing or corrupted files trigger a preparation dialog with file progress and an overall completion count.
+3. The main window opens only after every dependency passes verification. Failed downloads can be retried or cancelled; completed downloads are retained and partial files are cleaned.
 
-Content beginning with `=` is evaluated as an arithmetic expression:
+Both building and running use `lib/`, but it does not need to be prepared manually. Running the JAR does not require an external copy of the dependency lock.
 
-```text
-{{=quantity*unitPrice}}
+### From data to output
+
+```mermaid
+flowchart LR
+    Template[Select template] --> Values[Template variables]
+    Manual[Manual input] --> Values
+    Excel[Excel cells] --> Mapping[Mapping and preview]
+    Mapping -->|Confirm application| Values
+    Values --> Adjust[Review in Template Filling]
+    Adjust --> Generate[Generate result]
+    Generate --> Output[Preview / copy / export]
 ```
 
-Expressions support `+`, `-`, `*`, `/`, `**` (power), postfix `%` (percentage), and parentheses. `5%` equals `0.05`, for example `{{=amount*5%}}`. Results use the same 0–10 decimal-place setting as ordinary numeric replacements (two by default) and are rounded half up. Referenced variables are locked to Numeric, and blank values are treated as `0`. More common examples are available on the Calculation Guide tab in the help window.
+Opening another workbook or restoring mappings updates the preview only. Click Apply to Template Variables (`应用到模板变量`) to change values. Editing the template, variables, or date invalidates existing results; generate again before using the new output.
 
-Variables can be referenced in two ways:
+Loading, saving, generating, and exporting run as background file tasks. Cancellable tasks expose a cancel control. Switching or refreshing templates handles unsaved edits first; a failed or cancelled load preserves the previous template.
 
-| Form | Use | Example |
+## Usage
+
+### Fill and export a template
+
+- **Select:** use `选择模板文件…` to open `.txt` or `.docx`. Templates live under `Templates/` and may be organized in subfolders.
+- **Edit:** text templates can be edited and saved in the application. Word templates are read-only; edit them externally, then use Refresh Template (`刷新模板`). New Template creates `.txt` files.
+- **Enter values:** each variable appears once. Use Expand (`展开…`) for multiline text. Variables used in expressions cannot be changed to text types.
+- **Date and precision:** each launch starts with today's date. Enter `yyyy-MM-dd` or use the calendar. Numeric output uses 0–10 decimal places, defaulting to 2.
+- **Generate and export:** generate only in Template Filling. Export the generated `.docx` to preserve Word formatting; copying provides text content.
+
+### Extract Excel data
+
+1. Select the target template and variable types. Names, identifiers, and dates usually use text; calculation inputs use numeric types.
+2. Open Data Extraction (`数据提取`) and choose an Excel file (`选择 Excel…`). The top flow shows `workbook.xlsx → template.txt/.docx`; template selection is synchronized with Template Filling.
+3. Select a worksheet, header row, row-title column (A=1), and current record row. Click a cell or enter an address such as `D8` to inspect its titles and content.
+4. Choose a positioning mode and target variable, then select `添加／更新映射`. Each variable has one mapping; one source may populate several variables.
+5. Compare displayed content, the value to import, the existing value, and status. Resolve issues and select `应用到模板变量`.
+6. Return to Template Filling to review, adjust, generate, and export.
+
+| Positioning mode | Suitable data | Reuse behavior |
 | --- | --- | --- |
-| Bare name | Starts with a letter and may continue with letters, digits, or underscores | `{{=quantity*unitPrice}}` |
-| `[variable name]` | Numeric-only names, spaces, special characters, or an explicit reference to any ordinary name | `{{=[1]*[2]}}` |
+| Fixed cell | Reports with a stable layout | Uses coordinates with structural checks; layout changes require rebinding |
+| Row/column titles | Similar reports whose rows or columns may move | Relocates by titles and context, including renamed workbooks and worksheets |
+| Current record / column title | One customer, project, or record per row | Reuses column mappings while a different record row is selected |
 
-Numeric variables and numeric literals are deliberately distinct:
+Same-name suggestions (`同名绑定建议…`) propose uniquely matching columns for user confirmation. Existing mappings can be disabled, updated, or changed to manual entry. Use `清理失效映射` to remove mappings for variables no longer present in the template.
 
-```text
-{{=1*2}}                  Numeric literals 1 × 2; result: 2.00
-{{=[1]*[2]}}              Variable “1” × variable “2”
-{{=quantity*2}}           Variable “quantity” × numeric literal 2
-{{=[sales quantity]*[price-discount]}}
-```
+### Excel values and mapping limits
 
-Numeric literals include forms such as `5`, `3.5`, `.5`, `2e3`, and `1.5E-2`. Built-in date variables cannot participate in arithmetic.
+- **Formulas:** reads saved calculation results, never formula text. It does not recalculate or modify the workbook. Recalculate and save in Excel, then refresh if results are missing or erroneous; saved results can also be stale.
+- **Text and numbers:** text uses displayed content, retaining leading zeros, date formats, and line breaks. Numbers use underlying values rather than rounded display values. Dates cannot be imported as numeric serials.
+- **Empty values:** errors by default. A mapping can preserve the existing value or allow empty text to clear it. Missing, erroneous, or ambiguous sources never silently become zero.
+- **Structural changes:** mappings are restored only when sources can be uniquely located. Missing or duplicate required titles need rebinding. Fixed coordinates without recognizable anchors require explicit binding after opening the file.
+- **Saving and undo:** valid mapping changes are saved with the template, without binding to an Excel filename. Undo Last Import (`撤销本次填入`) preserves conflicting later manual edits. Source indicators (`↗`) and undo history last only for the current template session.
+- **External changes:** refresh if the workbook changes or becomes inaccessible. Refreshing does not itself replace entered values.
 
-### Built-in date variables
+The current scope is `.xlsx`, a single configured header row, and merged-title display. Each mapping reads one cell. Legacy `.xls`, automatic multilevel-header inference, range aggregation, joins across sheets, and batch document generation are not supported. Files above 128 MB or 300,000 defined cells are rejected rather than truncated.
 
-All date variables are derived from the base date selected in the UI:
+## Template Syntax
+
+### Variables and expressions
 
 | Syntax | Meaning |
 | --- | --- |
-| `{{今日年}}` `{{今日年月}}` `{{今日年月日}}` | Base date |
-| `{{昨日年}}` `{{昨日年月}}` `{{昨日年月日}}` | Day before the base date |
-| `{{明日年}}` `{{明日年月}}` `{{明日年月日}}` | Day after the base date |
-| `{{今日}}` `{{昨日}}` `{{明日}}` | Day only, such as `1日` or `31日` |
-| `{{本月年}}` `{{本月年月}}` | Base month |
-| `{{上月年}}` `{{上月年月}}` | Previous month |
-| `{{下月年}}` `{{下月年月}}` | Next month |
-| `{{本月}}` `{{上月}}` `{{下月}}` | Month only, such as `1月` or `12月` |
-| `{{本月天数}}` | Number of days in the base month, output as `28`, `29`, `30`, or `31` |
-| `{{上年}}` `{{本年}}` `{{下年}}` | Relative years |
-| `{{本月月首}}` `{{本月月末}}` | First or last day of the base month, month-day only, such as `2月1日` or `2月29日` |
+| `{{客户}}` | A variable with a numeric or text type |
+| `{{1}}` | A variable named `1` |
+| `{{=数量*单价}}` | An arithmetic expression |
+| `{{=金额*5%}}` | Percentage calculation; `5%` means `0.05` |
+| `{{=[1]*[2]}}` | References variables named `1` and `2`, not numeric constants |
+| `{{=[销售 数量]*[单价-折扣]}}` | Brackets reference names containing spaces or special characters |
 
-The old `[[variable]]` form is deprecated. The app offers a one-time conversion when such a template is loaded; unconverted placeholders remain unchanged and are not filled.
+Expressions support `+`, `-`, `*`, `/`, `**` (power), postfix `%`, and parentheses. Numeric constants support scientific notation. `{{=1*2}}` multiplies constants. Built-in date variables cannot participate in arithmetic.
 
-## Build
+Blank manual numeric input is zero. Numbers and expression results are rounded and padded to the template's decimal precision. Excel empty values follow mapping policies instead of this manual-input rule.
 
-Main and test builds use two independent scripts. To compile and package the application, double-click `build.bat` or run:
+### Date variables
+
+All dates use the selected base date, rather than reading the system date again during generation. Built-in names remain Chinese, including in English-language templates.
+
+| Common syntax | Output |
+| --- | --- |
+| `{{今日年月日}}` | Full date, such as `2026年9月3日` |
+| `{{今日年月}}`, `{{今日年}}` | Year/month or year |
+| `{{今日}}`, `{{昨日}}`, `{{明日}}` | Day of the corresponding date, such as `3日` |
+| `{{本月}}`, `{{上月}}`, `{{下月}}` | Corresponding month, such as `9月` |
+| `{{本月年月}}` | Corresponding year and month |
+| `{{本月天数}}` | Days in the month, as a number |
+| `{{本月月首}}`, `{{本月月末}}` | Month/day of the month's first or last day |
+| `{{本年}}`, `{{上年}}`, `{{下年}}` | Corresponding year |
+
+Yesterday and tomorrow also support the `年`, `年月`, and `年月日` suffixes. Previous/current/next month support `年` and `年月`. F1 help provides the complete list and additional arithmetic examples.
+
+Legacy `[[variable]]` syntax can be backed up and converted to `{{variable}}` when prompted. Unconverted legacy placeholders are not filled.
+
+## Saved Data and Template Management
+
+These items are created during use and are not project source files to commit:
+
+| Location | Contents |
+| --- | --- |
+| `Templates/` | User templates and template migration backups |
+| `Config/` | Per-template variable types, current values, decimal places, and Excel mappings |
+| `config.json` | Last template, interface preferences, Excel-open and result-export directories |
+| `lib/` | Downloaded runtime dependency cache |
+
+A template's configuration mirrors its relative path and appends `.json` to the full filename. For example, `Templates/contracts/quote.docx` uses `Config/contracts/quote.docx.json`.
+
+- Clicking the template name in the application renames its configuration as well. When moving, copying, or renaming externally, update the matching configuration yourself; close the application first.
+- Back up `Templates/` and `Config/` together to preserve templates and settings. Include `config.json` for interface preferences. The dependency cache is not user data.
+- Templates without configuration use defaults. Separate drafts for variable types last only for the current session; the active type and value persist across launches.
+- Excel-open and result-export directories are remembered separately after successful operations. Cancelling a file dialog does not change them.
+- An existing legacy `last_values.json` is migrated read-only and retained. Routine use does not require editing configuration JSON.
+
+The fixed About (`关于`) button at the top right opens the project license, third-party overview, and full legal texts offline. F1 remains dedicated to template syntax and usage help.
+
+## Shortcuts and Troubleshooting
+
+| Shortcut | Action |
+| --- | --- |
+| `Tab` | Next variable input |
+| `Ctrl+Enter` | Generate, only in Template Filling |
+| `Ctrl+S` | Save a text template in Template Filling; save mappings in Data Extraction |
+| `F1` / `F4` | Help / cycle through input errors |
+| `Ctrl+Plus/Minus` / `Ctrl+0` | Change font size / follow system font size |
+
+| Problem | What to check |
+| --- | --- |
+| Java missing or unsupported version | Install Java/JDK 17 or later and check `JAVA_HOME` or PATH |
+| Dependency download fails | Check network access and directory write permissions, then retry; alternatively copy a complete `lib/` |
+| Word template cannot be edited | Edit externally, then refresh the template |
+| Copy or export is unavailable | Resolve input errors and regenerate after editing the template, variables, or date |
+| Excel mappings cannot be restored | Check worksheet, header row, title uniqueness, and positioning mode; rebind if needed |
+| Formula result is wrong or missing | Recalculate and save in Excel, then refresh; the application reads saved results only |
+| Settings missing after moving a template | Check the corresponding `Config/` path and select the template again |
+
+## Build, Test, and Distribute
+
+From the project directory, run:
 
 ```bat
 build.bat
 ```
 
-Run `build-test.bat` separately after a successful main build when you want to run tests. To run both from another batch file:
+After a successful main build, run tests separately when needed:
 
 ```bat
-call build.bat
-if errorlevel 1 exit /b 1
-call build-test.bat
+build-test.bat
 ```
 
-JDK 17 or later is required. Each script independently checks `JAVA_HOME`, JDK installations under `Program Files/Java`, then PATH. The main build uses `javac` and `jar`; the test build uses `javac` and `java`.
+| Script | Responsibility |
+| --- | --- |
+| `build.bat` | Prepare dependencies, recursively compile main sources, and package `TemplateTool.jar`; no tests |
+| `build-test.bat` | Prepare dependencies and compile/run all regression suites against the existing JAR; no main rebuild or modification |
+| `launcher.bat` | Start the existing JAR with Java; dependency checks happen inside the JAR |
 
-| Script | Responsibility | Output |
-| --- | --- | --- |
-| `build.bat` | Clean production output, recursively compile `src/main/java`, and package only production classes; does not compile or run tests | `out/`, `TemplateTool.jar` |
-| `build-test.bat` | Clean test output, recursively compile `test/java` against the existing `TemplateTool.jar`, and run all regression suites via `com.firefly.AllTests` | `out-test/` |
+Build scripts prefer `JAVA_HOME`, then JDK installations under `Program Files/Java`, then PATH. Rebuild main sources before testing changes. Both scripts repair missing or corrupted dependencies and clean their own intermediates on success or failure. Forced termination may leave temporary files, which the next corresponding build cleans. Compilation or packaging failure preserves the existing JAR.
 
-Neither script calls the other or cleans the other's output directory. The test script never modifies the application JAR; if it is missing, it asks you to run `build.bat` first. Rebuild the application after changing main sources before testing the latest code. A successful main build confirms compilation and packaging only; the test script reports test results separately. Failed tests do not delete or replace the existing JAR.
+Dependency versions and SHA-256 values are pinned in `dependencies.lock.json`, which must be committed. See [Architecture and Development](PROJECT_STRUCTURE.md) for source and test responsibilities.
 
-Source lists are written separately to `work/build/main-sources.txt` and `work/build/test-sources.txt`. New source packages are discovered automatically. Register new test suites in `AllTests`.
+| Distribution | Include |
+| --- | --- |
+| Internet available on first launch | `TemplateTool.jar`; optional `launcher.bat` and templates |
+| First launch must work offline | The above plus a complete `lib/` |
+
+The JAR contains the dependency lock, project license, third-party notices, and full third-party legal texts. Source code and build scripts are not needed for running it. Include matching `Config/` files when sharing saved values and mappings.
 
 ## Project Structure
 
-```
-├── build.bat                      # Compiles and packages the main program only
-├── build-test.bat                 # Independently compiles and runs tests against the existing JAR
-├── launcher.bat                   # One-click Windows launcher
-├── .gitignore                     # Excludes build output, runtime state, and editor files
-├── TemplateTool.jar               # Runnable application generated by build.bat
-├── out/                          # Production class files only; the release JAR's sole input
-├── out-test/                     # Test class files only; excluded from the release JAR
-├── work/build/                   # Generated recursive source lists and build intermediates
-├── README.md / README.en.md       # Chinese and English documentation
-├── LICENSE                        # MIT license
-├── Templates/                     # Created automatically on first run; stores templates and migration backups
-├── Config/                        # Created at runtime; stores per-template values, types, and decimal places
-├── config.json                    # Generated at runtime; stores UI state and the last selected template
-├── last_values.json               # Generated only by legacy versions; read by the current version for migration
+Only maintained project files and modules are shown. Class responsibilities are documented in [Architecture and Development](PROJECT_STRUCTURE.md).
+
+```text
+.
 ├── src/main/java/com/firefly/
-│   ├── Main.java                    # Entry point and system appearance setup
-│   ├── TemplateToolApp.java         # Main window, file-task coordination, prompts, and result display
-│   ├── TemplateConstants.java       # Placeholder, date-variable, and default-template constants
-│   ├── application/                # Session and generation logic without Swing dependencies
-│   │   ├── TemplateSession.java     # Current template, variable drafts, revisions, and update entry points
-│   │   ├── VariableValidation.java  # Pre-generation normalization, issues, and numeric variable names
-│   │   ├── GenerationRequest.java   # Independent input snapshot and stale-result detection
-│   │   ├── GeneratedResult.java     # Generated content and temporary Word file information
-│   │   └── GenerationService.java   # Text/Word generation, progress, and failure/cancellation cleanup
-│   ├── core/
-│   │   ├── TemplateParser.java      # Extracts variables, expression dependencies, and dates
-│   │   ├── ExpressionEvaluator.java # Expression tokenizer and safe recursive-descent evaluator
-│   │   ├── NumericFormatter.java   # Shared decimal formatting for numeric values and expressions
-│   │   ├── TemplateRenderer.java    # Plain-text substitution and expression rendering
-│   │   ├── DocxProcessor.java       # Word extraction, rendering, and cross-run migration
-│   │   ├── LegacyTemplateMigrator.java # Legacy detection, backup, and atomic migration
-│   │   ├── TemplateStore.java       # Templates directory and example management
-│   │   ├── TextFileWriter.java      # UTF-8 BOM text I/O and newline handling
-│   │   ├── ValueNormalizer.java     # Numeric validation and normalization
-│   │   ├── VariableType.java        # Numeric, Short Text, and Multi-line Text types
-│   │   ├── VariableInputState.java  # Values, session drafts, expression locks, and independent copies
-│   │   ├── AppConfig*.java          # Application configuration model and storage
-│   │   ├── TemplateConfig*.java     # Per-template variable and decimal-place configuration
-│   │   ├── AtomicConfigWriter.java  # Temporary writes and atomic config replacement
-│   │   ├── OperationProgress.java   # Core file-operation progress callback
-│   │   ├── FileOperationText.java   # Shared status text for loading, saving, generation, and other background tasks
-│   │   ├── JsonData.java / MiniJson.java # JSON support
-│   │   └── LegacyConfigMigrator.java / LastValuesStore.java # Legacy config migration
-│   └── ui/
-│       ├── DatePickerPanel.java      # Base-date input and calendar
-│       ├── VariableInputPanel.java   # Variable display, conversion prompts, and session update wiring
-│       ├── ScrollablePanel.java      # Adaptive scrolling container for the variable form
-│       ├── MultilineEditorDialog.java # Multi-line text editor
-│       ├── VariableTypeConversionDialog.java # Type-conversion confirmation
-│       ├── ResultPanel.java          # Result preview
-│       ├── FileTaskManager.java / FileTaskProgressPanel.java # Background tasks and fixed progress area
-│       ├── TemplateBusyLayerUI.java  # Workspace blocking layer for exclusive template tasks
-│       ├── TemplateHelpDialog.java   # Syntax, date, and variable help
-│       ├── UiFontManager.java / FontScalePreset.java # Font scaling
-│       └── ValidationIssue*.java / IssueSeverity.java # Issue tracking and navigation
-└── test/java/com/firefly/
-    ├── AllTests.java                # Single entry point for all regression suites
-    ├── TemplateFeatureTests.java    # Existing variable, format, Word, config, and migration regression suite
-    └── application/
-        └── ApplicationTests.java    # Session, batch updates, generation snapshots, cleanup, and UI wiring
+│   ├── Main.java                  # Application entry after dependency preparation
+│   ├── TemplateToolApp.java       # Main window and workflow coordination
+│   ├── TemplateConstants.java     # Placeholder and date constants
+│   ├── bootstrap/                # Startup checks, downloads, and progress dialog
+│   ├── application/              # Sessions, validation, and result generation
+│   ├── core/                     # Parsing, formatting, Word handling, and storage
+│   ├── extraction/               # Excel reading, mappings, and structure matching
+│   └── ui/                       # Swing tabs, controls, and background task interaction
+├── src/main/resources/META-INF/  # Legal resources packaged with the application
+│   └── THIRD_PARTY_LICENSES.txt  # Full third-party licenses and attributions
+├── test/java/com/firefly/
+│   ├── AllTests.java              # Entry for all regression suites
+│   ├── TemplateFeatureTests.java  # Syntax, Word, configuration, and migration
+│   ├── application/              # Session, generation, and UI wiring tests
+│   ├── bootstrap/                # Dependency, offline startup, and launch-gate tests
+│   └── extraction/               # Excel reading, mapping, and application tests
+├── build.bat                     # Main build
+├── build-test.bat                # Test compilation and execution
+├── launcher.bat                  # Windows launcher
+├── dependencies.lock.json        # Pinned versions, download URLs, and hashes
+├── .gitignore                    # Local data and build output exclusions
+├── .gitattributes                # Text and batch line-ending rules
+├── README.md                     # Chinese user guide
+├── README.en.md                  # English user guide
+├── PROJECT_STRUCTURE.md          # Module boundaries and development guide
+├── THIRD_PARTY_NOTICES.md         # Third-party components and licensing
+└── LICENSE                       # Project license
 ```
-
-The project has no Maven, Gradle, or third-party-library dependency. Production code follows the `src/main/java` layout; regression tests use the project's custom `test/java` directory and are independently compiled and run by `build-test.bat`. `TemplateTool.jar`, `out/`, `out-test/`, `work/`, `Templates/`, `Config/`, and runtime configuration files are generated artifacts or local data and are excluded by `.gitignore`. If the project later adopts Maven or Gradle, the tests can be moved to the conventional `src/test/java`; no such move is needed for the current build.
-
-### Extension boundaries
-
-- `core` retains parsing, formatting, Word processing, and configuration storage. `application` combines these capabilities into sessions and generation workflows. `ui` handles controls, confirmation dialogs, and issue navigation. The application layer does not depend on Swing.
-- Manual edits use `TemplateSession.setValue` and `activateType`. External data can use `applyValues` to assign a batch using the current variable types. It validates the entire batch before updating, rejects unknown variables, missing values, and blank/invalid numbers, preserves unmapped variables, and emits one change notification. The existing manual-input rule that a blank number means zero remains unchanged.
-- The main window subscribes to session changes to invalidate old results, refresh batch values, and schedule configuration saves. Variable reads return independent copies, so extensions cannot mutate session state through a read result.
-- Access each session serially on one thread; the desktop application uses the Swing event thread. Apply background data-reading results on that thread. Generation receives a `GenerationRequest` snapshot and never reads window controls. Template edits mark revisions before delayed parsing, preserving stale-result protection.
-- Excel reading and mapping UI are not implemented yet. Future reader and mapping modules can connect through the session API. Existing template syntax, configuration formats, and user workflows remain unchanged.
 
 ## License
 
-[MIT License](LICENSE)
+This project uses the [MIT License](LICENSE). Dependencies follow their own licenses. Automatic downloads do not remove applicable obligations; retain license and NOTICE files in dependency JARs. See [Third-Party Notices](THIRD_PARTY_NOTICES.md), available offline from About (`关于`) at the top right, together with the project MIT license and full third-party legal texts.

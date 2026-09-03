@@ -9,6 +9,13 @@ public final class AppConfig {
     public static final float MAX_FONT_SCALE = 2.00f;
 
     private String lastTemplate;
+    private String lastExcelDirectory;
+    private String lastExportDirectory;
+
+    public String lastExcelDirectory() { return lastExcelDirectory; }
+    public void setLastExcelDirectory(String value) { lastExcelDirectory = value; }
+    public String lastExportDirectory() { return lastExportDirectory; }
+    public void setLastExportDirectory(String value) { lastExportDirectory = value; }
     private int mainDividerLocation = DEFAULT_MAIN_DIVIDER;
     private int previewResultDividerLocation = DEFAULT_PREVIEW_DIVIDER;
     private boolean legacyLastValuesMigrated;

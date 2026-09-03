@@ -24,6 +24,8 @@ public final class AppConfigStore {
         try {
             Object parsed = JsonData.parse(Files.readString(configFile, StandardCharsets.UTF_8));
             if (!(parsed instanceof Map<?, ?> root)) return config;
+            if (root.get("lastExcelDirectory") instanceof String directory) config.setLastExcelDirectory(directory);
+            if (root.get("lastExportDirectory") instanceof String directory) config.setLastExportDirectory(directory);
             Object last = root.get("lastTemplate");
             if (last instanceof String text && !text.isBlank()) config.setLastTemplate(text);
             Object migrated = root.get("legacyLastValuesMigrated");
@@ -51,6 +53,8 @@ public final class AppConfigStore {
         Map<String, Object> root = new LinkedHashMap<>();
         root.put("version", 1);
         root.put("lastTemplate", config.lastTemplate());
+        root.put("lastExcelDirectory", config.lastExcelDirectory());
+        root.put("lastExportDirectory", config.lastExportDirectory());
         root.put("legacyLastValuesMigrated", config.legacyLastValuesMigrated());
         Map<String, Object> layout = new LinkedHashMap<>();
         layout.put("mainDividerLocation", config.mainDividerLocation());

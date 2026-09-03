@@ -1,5 +1,6 @@
 package com.firefly.core;
 
+import com.firefly.extraction.MappingProfile;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -21,6 +22,10 @@ public final class TemplateConfig {
     private final String templateName;
     private final Map<String, Entry> variables = new LinkedHashMap<>();
     private int decimalPlaces = NumericFormatter.DEFAULT_DECIMAL_PLACES;
+    private MappingProfile dataExtraction = MappingProfile.EMPTY;
+
+    public MappingProfile dataExtraction() { return dataExtraction; }
+    public void setDataExtraction(MappingProfile value) { dataExtraction = value == null ? MappingProfile.EMPTY : value; }
 
     public TemplateConfig(String templateName) {
         this.templateName = templateName;
