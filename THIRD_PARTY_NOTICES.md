@@ -82,11 +82,11 @@ This product includes software developed by the University of Chicago, as Operat
 
 ## 材料来源
 
-- 依赖 JAR 和对应版本源码包：Maven Central（https://repo.maven.apache.org/maven2/），具体二进制地址与校验值见 dependencies.lock.json。
-- SparseBitSet：1.3 标签 LICENSE（https://github.com/brettwooldridge/SparseBitSet/blob/SparseBitSet-1.3/LICENSE）；署名取自同版本源码包中的 com/zaxxer/sparsebits/SparseBitSet.java。
-- curvesapi：1.08 标签 license.txt（https://github.com/virtuald/curvesapi/blob/1.08/license.txt） 与 上游许可说明（https://github.com/virtuald/curvesapi/tree/1.08#licenses）。Harmony 类的许可头取自 1.08 源码包的 com/graphbuilder/org/apache/harmony/awt/gl/Crossing.java。
-- Apache Harmony：官方源码镜像 NOTICE（https://github.com/apache/harmony/blob/trunk/NOTICE）。作为 curvesapi 所含 Harmony 代码的补充材料保留，不分发 Harmony 运行时。
-- 条款依据：Apache License 2.0 第 4 节（https://www.apache.org/licenses/LICENSE-2.0.html#redistribution）、各组件自带的 LICENSE/NOTICE 和上述 curvesapi BSD 原文。Apache 项目也可能包含其他许可的子组件，参见 Apache 许可 FAQ（https://www.apache.org/foundation/license-faq.html）。
+- 依赖 JAR 和对应版本源码包：Maven Central（https://repo.maven.apache.org/maven2/ ），具体二进制地址与校验值见 dependencies.lock.json。
+- SparseBitSet：1.3 标签 LICENSE（https://github.com/brettwooldridge/SparseBitSet/blob/SparseBitSet-1.3/LICENSE ）；署名取自同版本源码包中的 com/zaxxer/sparsebits/SparseBitSet.java。
+- curvesapi：1.08 标签 license.txt（https://github.com/virtuald/curvesapi/blob/1.08/license.txt ） 与 上游许可说明（https://github.com/virtuald/curvesapi/tree/1.08#licenses ）。Harmony 类的许可头取自 1.08 源码包的 com/graphbuilder/org/apache/harmony/awt/gl/Crossing.java。
+- Apache Harmony：官方源码镜像 NOTICE（https://github.com/apache/harmony/blob/trunk/NOTICE ）。作为 curvesapi 所含 Harmony 代码的补充材料保留，不分发 Harmony 运行时。
+- 条款依据：Apache License 2.0 第 4 节（https://www.apache.org/licenses/LICENSE-2.0.html#redistribution ）、各组件自带的 LICENSE/NOTICE 和上述 curvesapi BSD 原文。Apache 项目也可能包含其他许可的子组件，参见 Apache 许可 FAQ（https://www.apache.org/foundation/license-faq.html ）。
 
 ## 如何分发
 
