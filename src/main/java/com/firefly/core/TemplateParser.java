@@ -9,7 +9,7 @@ import java.util.Set;
 import java.util.regex.Matcher;
 
 /**
- * 模板占位符解析：提取需要填写的变量与自动日期变量。
+ * 模板占位符解析：提取需要填写的变量与自动变量。
  */
 public final class TemplateParser {
 
@@ -33,7 +33,7 @@ public final class TemplateParser {
                                  Set<String> expressionVariables) {
     }
 
-    /** 单次遍历模板：同时提取输入变量、自动日期变量，并统计表达式个数。 */
+    /** 单次遍历模板：同时提取输入变量、自动变量，并统计表达式个数。 */
     public static ParsedTemplate parse(String template) {
         List<String> inputs = new ArrayList<>();
         List<String> autos = new ArrayList<>();
@@ -54,7 +54,9 @@ public final class TemplateParser {
                 String expr = content.substring(1).trim();
                 try {
                     for (String name : ExpressionEvaluator.referencedVariables(expr)) {
-                        if (!TemplateConstants.AUTO_VAR_SET.contains(name) && !seenInputs.contains(name)) {
+                        if (TemplateConstants.AUTO_VAR_SET.contains(name)) {
+                            if (seenAutos.add(name)) autos.add(name);
+                        } else if (!seenInputs.contains(name)) {
                             seenInputs.add(name);
                             inputs.add(name);
                         }

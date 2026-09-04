@@ -202,7 +202,7 @@ public final class ExpressionEvaluator {
         }
 
         private double variableValue(String name) throws EvalException {
-            if (TemplateConstants.AUTO_VAR_SET.contains(name)) {
+            if (TemplateConstants.AUTO_DATE_VAR_SET.contains(name)) {
                 throw new EvalException("自动日期变量「" + name + "」不能参与运算");
             }
             String value = values.get(name);

@@ -23,6 +23,7 @@ import java.awt.Font;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.LocalDate;
 import java.util.Map;
 import java.util.LinkedHashMap;
 import java.util.Set;
@@ -49,6 +50,7 @@ public final class TemplateFeatureTests {
         testExplicitNumericVariables();
         testUnifiedDecimalFormatting();
         testPercentageExpressions();
+        testAutomaticNumericAndMonthBoundaries();
         testConstantsRemainConstants();
         testLegacySyntaxIsIgnoredAndMigrated();
         testDocxLegacyMigrationAcrossRuns();
@@ -314,6 +316,41 @@ public final class TemplateFeatureTests {
         assertTrue(TemplateParser.parse("{{=金额*税率%}}")
                         .expressionVariables().containsAll(Set.of("金额", "税率")),
                 "percentage expression dependencies");
+    }
+
+    private static void testAutomaticNumericAndMonthBoundaries() {
+        Map<String, String> leapFebruary = TemplateConstants.autoValues(LocalDate.of(2024, 2, 15));
+        assertEquals("29", leapFebruary.get("本月天数"), "leap February day count");
+        assertEquals("31", leapFebruary.get("上月天数"), "previous month day count");
+        assertEquals("31", leapFebruary.get("下月天数"), "next month day count");
+        assertEquals("1月1日", leapFebruary.get("上月月首"), "previous month first day");
+        assertEquals("1月31日", leapFebruary.get("上月月末"), "previous month last day");
+        assertEquals("3月1日", leapFebruary.get("下月月首"), "next month first day");
+        assertEquals("3月31日", leapFebruary.get("下月月末"), "next month last day");
+        assertTrue(TemplateConstants.AUTO_NUMERIC_VAR_SET.contains("本月天数")
+                        && !TemplateConstants.AUTO_DATE_VAR_SET.contains("本月天数"),
+                "month day count is automatic numeric, not date text");
+
+        TemplateParser.ParsedTemplate parsed = TemplateParser.parse(
+                "{{本月天数}} / {{=本月天数*2}} / {{本月月末}}");
+        assertTrue(parsed.inputVariables().isEmpty()
+                        && parsed.autoVariables().contains("本月天数"),
+                "automatic numeric variable creates no input field");
+        TemplateRenderer.RenderResult rendered = TemplateRenderer.renderUnified(
+                "{{本月天数}} / {{=本月天数*2}} / {{本月月末}}",
+                Map.of(), leapFebruary);
+        assertTrue(!rendered.hasError(), "automatic numeric expression renders");
+        assertEquals("29 / 58.00 / 2月29日", rendered.result(),
+                "automatic numeric expression and month boundary output");
+        assertEquals("91.00", TemplateRenderer.renderUnified(
+                "{{=上月天数+本月天数+下月天数}}", Map.of(), leapFebruary).result(),
+                "relative month day counts participate in one expression");
+
+        Map<String, String> january = TemplateConstants.autoValues(LocalDate.of(2027, 1, 10));
+        assertEquals("31", january.get("上月天数"), "previous year month day count");
+        assertEquals("28", january.get("下月天数"), "ordinary February day count");
+        assertEquals("12月1日", january.get("上月月首"), "previous year month first day");
+        assertEquals("12月31日", january.get("上月月末"), "previous year month last day");
     }
 
     private static void testConstantsRemainConstants() {

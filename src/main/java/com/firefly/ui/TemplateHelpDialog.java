@@ -93,7 +93,9 @@ public final class TemplateHelpDialog extends JDialog {
                     counts.getOrDefault(spec.name(), 0)});
         }
         for (String auto : parsed.autoVariables()) {
-            currentModel.addRow(new Object[]{auto, "自动填充", "{{ }}", "否", "—",
+            boolean numeric = TemplateConstants.AUTO_NUMERIC_VAR_SET.contains(auto);
+            currentModel.addRow(new Object[]{auto, numeric ? "自动数值" : "自动日期", "{{ }}",
+                    numeric ? "可参与" : "不可参与", "自动",
                     counts.getOrDefault(auto, 0)});
         }
         Matcher matcher = TemplateConstants.PLACEHOLDER_RE.matcher(template);
@@ -154,6 +156,7 @@ public final class TemplateHelpDialog extends JDialog {
                 + "• 短字符串原样替换。\n"
                 + "• 多行文本保留换行。\n"
                 + "• 表达式引用的变量会锁定为数值。\n"
+                + "• {{上月天数}}、{{本月天数}}、{{下月天数}} 是自动数值变量，无需填写且可以参与运算。\n"
                 + "• 在变量值输入框按 Tab 可跳到下一变量值。\n"
                 + "• 同名变量只需填写一次。";
     }
@@ -184,12 +187,13 @@ public final class TemplateHelpDialog extends JDialog {
                 + "• 乘方使用 **，例如 2**3 的结果是 8。\n"
                 + "• 百分号直接作用于它前面的数值、变量或括号结果。\n"
                 + "• 表达式引用的变量固定为数值类型，留空按 0 处理。\n"
+                + "• 自动数值变量 {{上月天数}}、{{本月天数}}、{{下月天数}} 可直接参与运算，例如 {{=上月天数+本月天数+下月天数}}。\n"
                 + "• 除数为 0、变量内容不是有效数字或表达式语法错误时，不会生成结果。\n"
                 + "• 最终结果按照主界面设置的小数位数统一四舍五入并补足末尾零。";
     }
 
     public static String dateHelpText() {
-        List<String> names = new ArrayList<>(TemplateConstants.AUTO_VAR_SET);
+        List<String> names = new ArrayList<>(TemplateConstants.AUTO_DATE_VAR_SET);
         names.sort(Comparator.comparingInt(TemplateHelpDialog::dateCategory).thenComparing(String::compareTo));
         StringBuilder text = new StringBuilder("所有日期变量均以主界面选择的基准日期为准。\n");
         int lastCategory = -1;
@@ -217,13 +221,12 @@ public final class TemplateHelpDialog extends JDialog {
     private static String dateMeaning(String name) {
         if (name.endsWith("年月日")) return "对应日期（X年X月X日）";
         if (name.endsWith("年月")) return "对应月份（X年X月）";
-        if (name.endsWith("月首")) return "基准月份第一天（X月X日）";
-        if (name.endsWith("月末")) return "基准月份最后一天（X月X日）";
+        if (name.endsWith("月首")) return "对应月份第一天（X月X日）";
+        if (name.endsWith("月末")) return "对应月份最后一天（X月X日）";
         if (name.equals("今日") || name.equals("昨日") || name.equals("明日"))
             return "对应日期的日（X日）";
         if (name.equals("本月") || name.equals("上月") || name.equals("下月"))
             return "对应月份（X月）";
-        if (name.equals("本月天数")) return "基准月份的天数（28 / 29 / 30 / 31）";
         if (name.endsWith("年") || name.equals("本年") || name.equals("上年") || name.equals("下年")) return "对应年份（X年）";
         return "由基准日期自动计算";
     }

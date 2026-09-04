@@ -9,7 +9,7 @@ A Java Swing desktop application that fills text and Word templates with manuall
 | Capability | Description |
 | --- | --- |
 | Template filling | Supports `.txt` and `.docx`; enter each named variable once |
-| Variables and calculations | Numbers, short text, multiline text, arithmetic expressions, and built-in dates |
+| Variables and calculations | Numbers, short text, multiline text, arithmetic expressions, automatic numeric variables, and built-in dates |
 | Excel extraction | Preview `.xlsx` cells and map their values to template variables |
 | Reusable mappings | Match headers and row titles instead of binding rules to a workbook filename |
 | Output | Preview, copy text, or export files; Word output preserves template formatting |
@@ -141,6 +141,10 @@ Expressions support `+`, `-`, `*`, `/`, `**` (power), postfix `%`, and parenthes
 
 Blank manual numeric input is zero. Numbers and expression results are rounded and padded to the template's decimal precision. Excel empty values follow mapping policies instead of this manual-input rule.
 
+### Automatic numeric variables
+
+`{{上月天数}}`, `{{本月天数}}`, and `{{下月天数}}` output the actual number of days in the previous, base, and next month: `28`, `29`, `30`, or `31`. They have no input fields and can participate directly in expressions, for example `{{=上月天数+本月天数+下月天数}}`.
+
 ### Date variables
 
 All dates use the selected base date, rather than reading the system date again during generation. Built-in names remain Chinese, including in English-language templates.
@@ -152,11 +156,12 @@ All dates use the selected base date, rather than reading the system date again 
 | `{{今日}}`, `{{昨日}}`, `{{明日}}` | Day of the corresponding date, such as `3日` |
 | `{{本月}}`, `{{上月}}`, `{{下月}}` | Corresponding month, such as `9月` |
 | `{{本月年月}}` | Corresponding year and month |
-| `{{本月天数}}` | Days in the month, as a number |
 | `{{本月月首}}`, `{{本月月末}}` | Month/day of the month's first or last day |
+| `{{上月月首}}`, `{{上月月末}}` | Month/day of the previous month's first or last day |
+| `{{下月月首}}`, `{{下月月末}}` | Month/day of the next month's first or last day |
 | `{{本年}}`, `{{上年}}`, `{{下年}}` | Corresponding year |
 
-Yesterday and tomorrow also support the `年`, `年月`, and `年月日` suffixes. Previous/current/next month support `年` and `年月`. F1 help provides the complete list and additional arithmetic examples.
+Yesterday and tomorrow also support the `年`, `年月`, and `年月日` suffixes. Previous/current/next month support `年` and `年月`. Every month-start and month-end variable outputs `X月X日`; month/year boundaries and leap years are handled automatically. F1 help provides the complete list and additional arithmetic examples.
 
 Legacy `[[variable]]` syntax can be backed up and converted to `{{variable}}` when prompted. Unconverted legacy placeholders are not filled.
 
