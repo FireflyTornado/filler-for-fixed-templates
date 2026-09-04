@@ -75,7 +75,7 @@ flowchart LR
     Generate --> Output[Preview / copy / export]
 ```
 
-Opening another workbook or restoring mappings updates the preview only. Click Apply to Template Variables (`应用到模板变量`) to change values. Editing the template, variables, or date invalidates existing results; generate again before using the new output.
+Opening another workbook or restoring mappings updates the preview only. Use Apply Current Variable (`应用当前变量`) or Apply All Variables (`应用全部变量`) to change values. Editing the template, variables, or date invalidates existing results; generate again before using the new output.
 
 Loading, saving, generating, and exporting run as background file tasks. Cancellable tasks expose a cancel control. Switching or refreshing templates handles unsaved edits first; a failed or cancelled load preserves the previous template.
 
@@ -94,8 +94,8 @@ Loading, saving, generating, and exporting run as background file tasks. Cancell
 1. Select the target template and variable types. Names, identifiers, and dates usually use text; calculation inputs use numeric types.
 2. Open Data Extraction (`数据提取`) and choose an Excel file (`选择 Excel…`). The top flow shows `workbook.xlsx → template.txt/.docx`; template selection is synchronized with Template Filling.
 3. Select a worksheet, Column Titles Row (`列标题所在行`), and Row Titles Column (`行标题所在列`, accepting letters or column numbers). Column letters and titles appear on separate rows at the top; row numbers and titles appear in separate columns on the left. These header areas stay visible while scrolling; hover to read long titles.
-4. Click a variable in the lower table; Current Variable (`当前变量`) displays its name and type. Select the source cell and positioning mode, then select `添加／更新映射`. Each variable has one mapping; one source may populate several variables.
-5. Compare displayed content, the value to import, the existing value, and status. Resolve issues and select `应用到模板变量`.
+4. Click a variable in the lower table; Current Variable (`当前变量`) displays its name and type. Select the source cell and positioning mode. For a locked row or column, choose All Similar Mappings (`全部同类映射`) to follow the global row/column, or This Mapping Only (`仅此映射`) to save an independent row/column. Then select `添加／更新映射`.
+5. The table shows mode, selection scope, and a contextual source such as `客户表 / C3 / 行标题：张三 / 列标题：电话`. The explanation below uses the same actual resolved titles and shows the old and new values. Apply the current variable or all variables.
 6. Return to Template Filling to review, adjust, generate, and export.
 
 | Positioning mode | Suitable data | Reuse behavior |
@@ -106,6 +106,8 @@ Loading, saving, generating, and exporting run as background file tasks. Cancell
 | Lock row / change selected column (`锁定行／更改选定列`) | One customer, project, or record per column | Finds the row by title and reads the selected column |
 
 The row and column selectors retain their values separately and only affect their corresponding mode. The selector is hidden for fixed-cell and row/column-title mappings. The explanation below the mapping table shows the resolved source, destination template and variable, existing value, and expected replacement. Unsaved mapping edits must be added/updated before application. Selecting a different row or column only updates the preview.
+
+All Similar Mappings is the default: a global row affects every global locked-column mapping, while a global column affects every global locked-row mapping. This Mapping Only persists a separate row or column in that binding. Legacy mappings load with global scope. The spreadsheet data area highlights only one selected cell; clicking a row or column header changes the corresponding record selector without highlighting the whole row or column.
 
 Same-name suggestions (`同名绑定建议…`) propose uniquely matching columns, or matching rows in locked-row mode, for user confirmation. Existing mappings can be updated or changed to manual entry. Unmapped variables also remain in the selection table. Use `清理失效映射` to remove mappings for variables no longer present in the template.
 
@@ -118,6 +120,7 @@ Each launch uses a 1440×1000 default window, limited to the available screen ar
 - **Empty values:** an empty source cell defaults to Keep Existing Value (`空值保留原值`); Use Zero (`空值取0`) is also available. Numeric targets can retain their value or receive zero. Text targets show a notice when keeping existing text; Use Zero reports an error and blocks application. A literal zero is valid data. Missing titles, erroneous cells, and ambiguous sources are errors, never ordinary blanks.
 - **Legacy mappings:** the original record mode keeps its bindings under the new label. Legacy ERROR and CLEAR empty policies load as Keep Existing Value; each mapping can be changed to Use Zero explicitly.
 - **Legacy enabled state:** startup rewrites old configuration files, removes enabled flags, and converts disabled mappings to manual entry without changing variable values. Loading an imported legacy configuration also performs this conversion. Runtime mappings no longer have an enabled/disabled state.
+- **Apply current/all:** Apply Current Variable validates only the selected saved mapping, so unrelated mapping errors do not block it. Apply All Variables validates the whole batch and writes nothing if any mapped variable has an error. A kept blank has no value change to apply.
 - **Structural changes:** mappings are restored only when sources can be uniquely located. Missing or duplicate required titles need rebinding. Fixed coordinates without recognizable anchors require explicit binding after opening the file.
 - **Saving and undo:** valid mapping changes are saved with the template, without binding to an Excel filename. Undo Last Import (`撤销本次填入`) preserves conflicting later manual edits. Source indicators (`↗`) and undo history last only for the current template session.
 - **External changes:** refresh if the workbook changes or becomes inaccessible. Refreshing does not itself replace entered values.

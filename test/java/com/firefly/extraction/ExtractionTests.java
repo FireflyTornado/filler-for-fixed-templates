@@ -92,6 +92,7 @@ public final class ExtractionTests {
         check(book.sheets().get(1).cell(0, 5).error().contains("没有已保存结果"), "missing formula cache never becomes zero");
         check(book.sheets().get(1).cell(0, 6).error().contains("没有已保存结果"), "empty numeric formula cache never becomes zero");
     }
+    @SuppressWarnings("unchecked")
     private static void mappingRules(SpreadsheetData a, SpreadsheetData b, Path dir) throws Exception {
         TemplateSession session = session(); var sheet = a.sheets().get(0);
         var quantity = ENGINE.bind("数量", sheet, MappingProfile.Mode.TITLES, 0, 0, 1, 1, MappingProfile.EmptyPolicy.KEEP);
@@ -106,6 +107,15 @@ public final class ExtractionTests {
         var record = ENGINE.bind("数量", sheet, MappingProfile.Mode.RECORD, 0, 0, 1, 1, MappingProfile.EmptyPolicy.KEEP);
         result = ENGINE.preview(a, MappingProfile.EMPTY.put(record), session.variables(), sheet.name(), 2, 1, Set.of(), CHECKPOINT);
         equal("8", find(result, "数量").value(), "record selector changes data without rebinding");
+        check(find(result, "数量").source().contains("B3 / 行标题：华南 / 列标题：数量"), "record source includes resolved row and column titles");
+        var localAmount = ENGINE.bind("金额", sheet, MappingProfile.Mode.RECORD, 0, 0, 1, 3,
+                MappingProfile.EmptyPolicy.KEEP, MappingProfile.SelectionScope.LOCAL);
+        result = ENGINE.preview(a, MappingProfile.EMPTY.put(record).put(localAmount), session.variables(), sheet.name(), 2, 1, Set.of(), CHECKPOINT);
+        equal("8", find(result, "数量").value(), "global row applies to global locked-column mapping");
+        equal("7.035", find(result, "金额").value(), "local locked-column mapping retains its own row");
+        result = ENGINE.preview(a, MappingProfile.EMPTY.put(record).put(localAmount), session.variables(), sheet.name(), 1, 1, Set.of(), CHECKPOINT);
+        equal("3", find(result, "数量").value(), "changing global row updates global mapping");
+        equal("7.035", find(result, "金额").value(), "changing global row does not update local mapping");
         Path duplicate = dir.resolve("duplicate.xlsx"); fixture(duplicate, false, true);
         check(!find(ENGINE.preview(read(duplicate), rules, session.variables(), sheet.name(), 1, 1, Set.of(), CHECKPOINT), "数量").error().isEmpty(), "duplicate row titles rejected");
         var fixed = ENGINE.bind("数量", sheet, MappingProfile.Mode.FIXED, 0, 0, 1, 1, MappingProfile.EmptyPolicy.KEEP);
@@ -118,6 +128,14 @@ public final class ExtractionTests {
         check(find(ENGINE.preview(a, MappingProfile.EMPTY.put(date), session.variables(), sheet.name(), 1, 1, Set.of(date), CHECKPOINT), "数量").error().contains("日期"), "date serial never silently fills numeric variable");
         MappingProfile roundTrip = MappingProfile.fromJson(rules.toJson());
         check(roundTrip.equals(rules), "mapping profile round trips");
+        Map<String, Object> legacyRoot = new LinkedHashMap<>((Map<String, Object>) rules.toJson());
+        List<Map<String, Object>> legacyBindings = new ArrayList<>();
+        for (Object raw : (List<?>) legacyRoot.get("bindings")) {
+            Map<String, Object> old = new LinkedHashMap<>((Map<String, Object>) raw); old.remove("selectionScope"); legacyBindings.add(old);
+        }
+        legacyRoot.put("bindings", legacyBindings);
+        check(MappingProfile.fromJson(legacyRoot).bindings().stream().allMatch(binding -> binding.selectionScope() == MappingProfile.SelectionScope.GLOBAL),
+                "mappings saved before scope support default to global selection");
         check(!JsonData.stringify(rules.toJson()).contains(".xlsx"), "workbook name not bound in mapping config");
         Map<Long, SpreadsheetData.Cell> reducedCells = new LinkedHashMap<>(sheet.cells()); reducedCells.remove(SpreadsheetData.key(0, 2));
         SpreadsheetData reduced = new SpreadsheetData(a.path(), a.modified(), a.size(), List.of(new SpreadsheetData.Sheet(sheet.name(), sheet.rows(), sheet.columns(), reducedCells, List.of())));
@@ -193,14 +211,16 @@ public final class ExtractionTests {
         SpreadsheetData horizontal = transpose(a), moved = transpose(b);
         var sheet = horizontal.sheets().get(0); var session = session();
         var quantity = ENGINE.bind("数量", sheet, MappingProfile.Mode.COLUMN_RECORD, 0, 0, 1, 1, MappingProfile.EmptyPolicy.KEEP);
-        var client = ENGINE.bind("客户", sheet, MappingProfile.Mode.COLUMN_RECORD, 0, 0, 0, 1, MappingProfile.EmptyPolicy.KEEP);
+        var client = ENGINE.bind("客户", sheet, MappingProfile.Mode.COLUMN_RECORD, 0, 0, 0, 1,
+                MappingProfile.EmptyPolicy.KEEP, MappingProfile.SelectionScope.LOCAL);
         var rules = MappingProfile.EMPTY.put(quantity).put(client);
         var first = ENGINE.preview(horizontal, rules, session.variables(), sheet.name(), 1, 1, Set.of(), CHECKPOINT);
         equal("3", find(first, "数量").value(), "locked row reads first selected column");
         equal("华东", find(first, "客户").value(), "locked row can include first worksheet row");
         var second = ENGINE.preview(horizontal, rules, session.variables(), sheet.name(), 4, 2, Set.of(), CHECKPOINT);
         equal("8", find(second, "数量").value(), "column selector changes numeric record independently of row selector");
-        equal("华南", find(second, "客户").value(), "column selector changes text record");
+        equal("华东", find(second, "客户").value(), "global column selector does not change local mapping");
+        check(find(second, "数量").source().contains("C2 / 行标题：数量 / 列标题：华南"), "horizontal source includes resolved row and column titles");
         var relocated = find(ENGINE.preview(moved, rules, session.variables(), moved.sheets().get(0).name(), 0, 4, Set.of(), CHECKPOINT), "数量");
         equal("8", relocated.value(), "row and title-column movement follows row title");
         check(relocated.source().contains("E4"), "horizontal relocated address shown");
@@ -405,6 +425,12 @@ public final class ExtractionTests {
                             "frozen row titles track vertical scrolling");
                     check(rows.getRowHeight() == field(panel, "grid", JTable.class).getRowHeight(), "row titles align with data rows");
                     equal("3", find(panel.previews(), "数量").value(), "initial horizontal UI value");
+                    JTable data = field(panel, "grid", JTable.class); data.changeSelection(1, 1, false, false);
+                    check(data.getSelectedRowCount() == 1 && data.getSelectedColumnCount() == 1, "spreadsheet preview selects one cell only");
+                    check(data.getRowSelectionAllowed() && data.getColumnSelectionAllowed(), "spreadsheet preview keeps both row and column selection enabled");
+                    check(data.isCellSelected(1, 1) && !data.isCellSelected(1, 0) && !data.isCellSelected(1, 2), "only the row-column intersection is painted as selected");
+                    check(rows.getSelectedRow() == -1, "selecting a data cell does not highlight its row header");
+                    check(!columns.isCellSelected(0, 1), "column title display does not mirror the data-cell highlight");
                     field(panel, "recordColumn", JSpinner.class).setValue(3);
                 } catch (Exception e) { throw new RuntimeException(e); }
             });
@@ -413,10 +439,17 @@ public final class ExtractionTests {
                 try {
                     var app = owner.get(); var panel = field(app, "extractionPanel", DataExtractionPanel.class);
                     equal("8", find(panel.previews(), "数量").value(), "column selection refreshes saved mappings");
+                    check(!field(panel, "draftPending", Boolean.class), "global selector changes apply immediately without creating an unsaved mapping draft");
                     equal("500", field(app, "session", TemplateSession.class).variable("数量").value(), "preview does not modify old value");
                     String explanation = field(panel, "selection", JTextArea.class).getText();
-                    check(explanation.contains("C2") && explanation.contains("横向模板.txt") && explanation.contains("500") && explanation.contains("「8」"), "replacement explanation names real coordinates, template, old and new values");
-                    field(panel, "grid", JTable.class).changeSelection(1, 1, false, false); // 点击 B2，选定列仍为 C。
+                    check(explanation.contains("C2") && explanation.contains("行标题：数量") && explanation.contains("列标题：李四")
+                            && explanation.contains("横向模板.txt") && explanation.contains("500") && explanation.contains("「8」"), "replacement explanation names titles, coordinates, template, old and new values");
+                    JTable table = field(panel, "mappings", JTable.class);
+                    check(table.getColumnName(1).equals("定位方式") && table.getColumnName(2).equals("选定范围"), "mapping table displays mode and selection scope columns");
+                    check(table.getValueAt(table.getSelectedRow(), 1).toString().contains("锁定行"), "mapping row shows current positioning mode");
+                    check(table.getValueAt(table.getSelectedRow(), 2).toString().contains("全部同类映射：C 列"), "mapping row shows global selected column");
+                    field(panel, "grid", JTable.class).changeSelection(2, 1, false, false);
+                    field(panel, "grid", JTable.class).changeSelection(1, 1, false, false); // 重新点击 B2，选定列仍为 C。
                 } catch (Exception e) { throw new RuntimeException(e); }
             });
             awaitPreview(owner.get());
@@ -452,6 +485,36 @@ public final class ExtractionTests {
                 try {
                     var panel = field(owner.get(), "extractionPanel", DataExtractionPanel.class);
                     check(!field(panel, "apply", JButton.class).isEnabled(), "saved blank text zero blocks application");
+                    selectVariable(panel, "数量");
+                } catch (Exception e) { throw new RuntimeException(e); }
+            });
+            awaitPreview(owner.get());
+            SwingUtilities.invokeAndWait(() -> {
+                try {
+                    var panel = field(owner.get(), "extractionPanel", DataExtractionPanel.class);
+                    check(field(panel, "applyCurrent", JButton.class).isEnabled(), "current-variable application remains available when another mapping has an error");
+                    invoke(panel, "applyCurrentPreview", new Class<?>[]{});
+                    equal("8", field(owner.get(), "session", TemplateSession.class).variable("数量").value(), "current-variable application succeeds despite another mapping error");
+                    field(panel, "scope", JComboBox.class).setSelectedItem(MappingProfile.SelectionScope.LOCAL);
+                    field(panel, "recordColumn", JSpinner.class).setValue(2);
+                } catch (Exception e) { throw new RuntimeException(e); }
+            });
+            awaitPreview(owner.get());
+            SwingUtilities.invokeAndWait(() -> {
+                try {
+                    var panel = field(owner.get(), "extractionPanel", DataExtractionPanel.class);
+                    check(!field(panel, "applyCurrent", JButton.class).isEnabled(), "scope change must be saved before applying");
+                    invoke(panel, "bindSelected", new Class<?>[]{});
+                } catch (Exception e) { throw new RuntimeException(e); }
+            });
+            awaitPreview(owner.get());
+            SwingUtilities.invokeAndWait(() -> {
+                try {
+                    var panel = field(owner.get(), "extractionPanel", DataExtractionPanel.class);
+                    var savedBinding = panel.profile().get("数量");
+                    check(savedBinding.selectionScope() == MappingProfile.SelectionScope.LOCAL && savedBinding.column() == 1, "local scope persists its own selected column");
+                    equal("3", find(panel.previews(), "数量").value(), "local selected column overrides global column for one mapping");
+                    selectVariable(panel, "备注");
                     field(panel, "emptyPolicy", JComboBox.class).setSelectedItem(MappingProfile.EmptyPolicy.KEEP);
                     invoke(panel, "bindSelected", new Class<?>[]{});
                 } catch (Exception e) { throw new RuntimeException(e); }

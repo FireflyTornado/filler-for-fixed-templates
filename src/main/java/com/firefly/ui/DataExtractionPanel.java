@@ -31,7 +31,9 @@ public final class DataExtractionPanel extends JPanel {
     private final JComboBox<String> sheets = new JComboBox<>();
     private final JSpinner headerRow = spinner(1), titleColumn = new JSpinner(new SpinnerNumberModel(1, 1, 16_384, 1)), recordRow = spinner(2);
     private final JSpinner recordColumn = new JSpinner(new SpinnerNumberModel(2, 1, 16_384, 1));
-    private final JPanel recordSelector = row(new JLabel("选定行列"), recordRow, recordColumn, recordLabel);
+    private final JComboBox<MappingProfile.SelectionScope> scope = new JComboBox<>(MappingProfile.SelectionScope.values());
+    private final JLabel scopeLabel = new JLabel("选择范围");
+    private final JPanel recordSelector = row(new JLabel("选定行列"), recordRow, recordColumn, recordLabel, scopeLabel, scope);
     private final JComboBox<MappingProfile.Mode> mode = new JComboBox<>(MappingProfile.Mode.values());
     private final JComboBox<MappingProfile.EmptyPolicy> emptyPolicy = new JComboBox<>(MappingProfile.EmptyPolicy.values());
     private final JLabel target = new JLabel("请在下方表格选择变量");
@@ -45,8 +47,14 @@ public final class DataExtractionPanel extends JPanel {
     };
     private SpreadsheetPreview gridScroll;
     private JSplitPane extractionSplit;
-    private final JTable mappings = new JTable();
-    private final JButton apply = new JButton("应用到模板变量");
+    private final JTable mappings = new JTable() {
+        @Override public String getToolTipText(MouseEvent event) {
+            int row = rowAtPoint(event.getPoint()), column = columnAtPoint(event.getPoint());
+            return row < 0 || column < 0 ? null : "完整内容：" + getValueAt(row, column);
+        }
+    };
+    private final JButton applyCurrent = new JButton("应用当前变量");
+    private final JButton apply = new JButton("应用全部变量");
     private final JButton undo = new JButton("撤销本次填入");
     private final JTextField address = new JTextField(7);
     private final Timer previewTimer, fileTimer, dividerSaveTimer;
@@ -59,6 +67,7 @@ public final class DataExtractionPanel extends JPanel {
     private boolean updating, dirty, previewPending, fileChanged;
     private boolean sourcePicked, draftPending;
     private boolean adjustingDivider;
+    private int globalRecordRow = 1, globalRecordColumn = 1;
     private long loadSequence, previewSequence;
     private record PreviewResult(List<MappingEngine.Preview> saved, MappingEngine.Preview selected,
                                  boolean draft, String error) { }
@@ -105,7 +114,8 @@ public final class DataExtractionPanel extends JPanel {
             DefaultTableCellRenderer renderer = new DefaultTableCellRenderer(); renderer.putClientProperty("html.disable", Boolean.TRUE);
             table.setDefaultRenderer(Object.class, renderer);
         }
-        grid.setSelectionMode(ListSelectionModel.SINGLE_INTERVAL_SELECTION);
+        grid.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        grid.getColumnModel().getSelectionModel().setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         grid.getSelectionModel().addListSelectionListener(e -> { if (!e.getValueIsAdjusting()) showSelection(); });
         grid.getColumnModel().getSelectionModel().addListSelectionListener(e -> { if (!e.getValueIsAdjusting()) showSelection(); });
         grid.getTableHeader().setReorderingAllowed(false);
@@ -114,7 +124,6 @@ public final class DataExtractionPanel extends JPanel {
                 row -> { if (mode.getSelectedItem() == MappingProfile.Mode.RECORD) recordRow.setValue(row + 1); },
                 column -> {
                     if (mode.getSelectedItem() == MappingProfile.Mode.COLUMN_RECORD) recordColumn.setValue(column + 1);
-                    else if (grid.getRowCount() > 0) grid.changeSelection(Math.min(value(recordRow), grid.getRowCount() - 1), column, false, false);
                 });
         sourcePanel.add(gridScroll);
         selection.setEditable(false); selection.setLineWrap(true); selection.setWrapStyleWord(true);
@@ -181,17 +190,18 @@ public final class DataExtractionPanel extends JPanel {
         });
         sourcePanel.setMinimumSize(new Dimension(300, 60));
         add(extractionSplit);
-        apply.addActionListener(e -> applyPreview()); undo.addActionListener(e -> undoImport());
+        applyCurrent.addActionListener(e -> applyCurrentPreview()); apply.addActionListener(e -> applyPreview()); undo.addActionListener(e -> undoImport());
         JPanel bottom = new JPanel(new BorderLayout());
         bottom.add(status, BorderLayout.NORTH);
-        bottom.add(row(apply, undo, button("前往模板填充", goToFill)), BorderLayout.SOUTH); add(bottom, BorderLayout.SOUTH);
-        apply.setEnabled(false); undo.setEnabled(false);
+        bottom.add(row(applyCurrent, apply, undo, button("前往模板填充", goToFill)), BorderLayout.SOUTH); add(bottom, BorderLayout.SOUTH);
+        applyCurrent.setEnabled(false); apply.setEnabled(false); undo.setEnabled(false);
         sheets.addActionListener(e -> { if (!updating) sheetChanged(); });
         headerRow.addChangeListener(e -> { if (!updating) { refreshGrid(); schedulePreview(); } });
         titleColumn.addChangeListener(e -> { if (!updating) { refreshGrid(); schedulePreview(); } });
-        recordRow.addChangeListener(e -> { if (!updating) { showRecord(); schedulePreview(); } });
-        recordColumn.addChangeListener(e -> { if (!updating) { showRecord(); schedulePreview(); } });
+        recordRow.addChangeListener(e -> { if (!updating) { if (scope.getSelectedItem() == MappingProfile.SelectionScope.GLOBAL) { globalRecordRow = value(recordRow); sourcePicked = false; } showRecord(); schedulePreview(); } });
+        recordColumn.addChangeListener(e -> { if (!updating) { if (scope.getSelectedItem() == MappingProfile.SelectionScope.GLOBAL) { globalRecordColumn = value(recordColumn); sourcePicked = false; } showRecord(); schedulePreview(); } });
         mode.addActionListener(e -> { if (!updating) { updateRecordSelector(); schedulePreview(); } });
+        scope.addActionListener(e -> { if (!updating) scopeChanged(); });
         emptyPolicy.addActionListener(e -> { if (!updating) schedulePreview(); });
         address.addActionListener(e -> locate());
         mode.setSelectedItem(MappingProfile.Mode.TITLES);
@@ -203,7 +213,11 @@ public final class DataExtractionPanel extends JPanel {
         MappingProfile.Binding binding = profile.get(targetVariable);
         updating = true;
         try {
-            if (binding != null) { mode.setSelectedItem(binding.mode()); emptyPolicy.setSelectedItem(binding.emptyPolicy()); }
+            if (binding != null) {
+                mode.setSelectedItem(binding.mode()); emptyPolicy.setSelectedItem(binding.emptyPolicy()); scope.setSelectedItem(binding.selectionScope());
+                if (binding.mode() == MappingProfile.Mode.RECORD) recordRow.setValue((binding.selectionScope() == MappingProfile.SelectionScope.LOCAL ? binding.row() : globalRecordRow) + 1);
+                if (binding.mode() == MappingProfile.Mode.COLUMN_RECORD) recordColumn.setValue((binding.selectionScope() == MappingProfile.SelectionScope.LOCAL ? binding.column() : globalRecordColumn) + 1);
+            } else scope.setSelectedItem(MappingProfile.SelectionScope.GLOBAL);
         } finally { updating = false; }
         updateRecordSelector(); schedulePreview();
     }
@@ -234,7 +248,20 @@ public final class DataExtractionPanel extends JPanel {
         boolean rows = mode.getSelectedItem() == MappingProfile.Mode.RECORD;
         boolean columns = mode.getSelectedItem() == MappingProfile.Mode.COLUMN_RECORD;
         recordSelector.setVisible(rows || columns); recordRow.setVisible(rows); recordColumn.setVisible(columns);
+        scopeLabel.setVisible(rows || columns); scope.setVisible(rows || columns);
         showRecord(); recordSelector.getParent().revalidate();
+    }
+    private void scopeChanged() {
+        MappingProfile.Binding binding = profile.get(targetVariable);
+        boolean local = scope.getSelectedItem() == MappingProfile.SelectionScope.LOCAL;
+        updating = true;
+        try {
+            if (mode.getSelectedItem() == MappingProfile.Mode.RECORD)
+                recordRow.setValue((local && binding != null && binding.mode() == MappingProfile.Mode.RECORD ? binding.row() : globalRecordRow) + 1);
+            if (mode.getSelectedItem() == MappingProfile.Mode.COLUMN_RECORD)
+                recordColumn.setValue((local && binding != null && binding.mode() == MappingProfile.Mode.COLUMN_RECORD ? binding.column() : globalRecordColumn) + 1);
+        } finally { updating = false; }
+        showRecord(); schedulePreview();
     }
 
     public void templateChanged() {
@@ -304,8 +331,9 @@ public final class DataExtractionPanel extends JPanel {
         updating = true;
         try {
             if (remembered != null) { headerRow.setValue(remembered.headerRow() + 1); titleColumn.setValue(remembered.titleColumn() + 1); }
-            recordRow.setValue(Math.min(Math.max(value(headerRow) + 2, 1), Math.max(sheet.rows(), 1)));
-            recordColumn.setValue(Math.min(Math.max(value(titleColumn) + 2, 1), Math.min(Math.max(sheet.columns(), 1), 16_384)));
+            globalRecordRow = Math.min(Math.max(value(headerRow) + 1, 0), Math.max(sheet.rows() - 1, 0));
+            globalRecordColumn = Math.min(Math.max(value(titleColumn) + 1, 0), Math.min(Math.max(sheet.columns() - 1, 0), 16_383));
+            recordRow.setValue(globalRecordRow + 1); recordColumn.setValue(globalRecordColumn + 1);
         } finally { updating = false; }
         refreshGrid(); schedulePreview();
     }
@@ -365,8 +393,14 @@ public final class DataExtractionPanel extends JPanel {
         if (!session.variables().containsKey(variable)) throw new IllegalArgumentException("请先选择模板变量。");
         MappingProfile.Mode selectedMode = (MappingProfile.Mode) mode.getSelectedItem();
         MappingProfile.EmptyPolicy policy = (MappingProfile.EmptyPolicy) emptyPolicy.getSelectedItem();
+        MappingProfile.SelectionScope selectedScope = (MappingProfile.SelectionScope) scope.getSelectedItem();
         MappingProfile.Binding existing = profile.get(variable);
-        if (!sourcePicked && existing != null && existing.mode() == selectedMode) return existing.withEmptyPolicy(policy);
+        if (!sourcePicked && existing != null && existing.mode() == selectedMode) {
+            int selectedRow = existing.row(), selectedColumn = existing.column();
+            if (selectedScope == MappingProfile.SelectionScope.LOCAL && selectedMode == MappingProfile.Mode.RECORD) selectedRow = value(recordRow);
+            if (selectedScope == MappingProfile.SelectionScope.LOCAL && selectedMode == MappingProfile.Mode.COLUMN_RECORD) selectedColumn = value(recordColumn);
+            return existing.withSettings(policy, selectedScope, selectedRow, selectedColumn);
+        }
         if (sheet() == null) throw new IllegalArgumentException("请先打开 Excel 文件。");
         int row = grid.getSelectedRow(), column = grid.getSelectedColumn();
         if (!sourcePicked && existing != null) {
@@ -378,7 +412,7 @@ public final class DataExtractionPanel extends JPanel {
         }
         if (selectedMode == MappingProfile.Mode.RECORD) row = value(recordRow);
         if (selectedMode == MappingProfile.Mode.COLUMN_RECORD) column = value(recordColumn);
-        return engine.bind(variable, sheet(), selectedMode, value(headerRow), value(titleColumn), row, column, policy);
+        return engine.bind(variable, sheet(), selectedMode, value(headerRow), value(titleColumn), row, column, policy, selectedScope);
     }
     private String selectedVariable() {
         return targetVariable;
@@ -413,14 +447,16 @@ public final class DataExtractionPanel extends JPanel {
                 List<Integer> rows = new ArrayList<>();
                 for (int r = 0; r < sheet().rows(); r++) if (SpreadsheetData.normalize(sheet().cell(r, value(titleColumn)).display()).equals(SpreadsheetData.normalize(variable))) rows.add(r);
                 if (rows.size() == 1 && value(recordColumn) > value(titleColumn) && value(recordColumn) < sheet().columns()) {
-                    candidates.add(engine.bind(variable, sheet(), MappingProfile.Mode.COLUMN_RECORD, value(headerRow), value(titleColumn), rows.get(0), value(recordColumn), (MappingProfile.EmptyPolicy) emptyPolicy.getSelectedItem()));
+                    candidates.add(engine.bind(variable, sheet(), MappingProfile.Mode.COLUMN_RECORD, value(headerRow), value(titleColumn), rows.get(0), value(recordColumn),
+                            (MappingProfile.EmptyPolicy) emptyPolicy.getSelectedItem(), (MappingProfile.SelectionScope) scope.getSelectedItem()));
                 }
                 continue;
             }
             List<Integer> columns = new ArrayList<>();
             for (int c = 0; c < sheet().columns(); c++) if (SpreadsheetData.normalize(sheet().cell(value(headerRow), c).display()).equals(SpreadsheetData.normalize(variable))) columns.add(c);
             if (columns.size() == 1 && value(recordRow) > value(headerRow) && value(recordRow) < sheet().rows()) {
-                candidates.add(engine.bind(variable, sheet(), MappingProfile.Mode.RECORD, value(headerRow), value(titleColumn), value(recordRow), columns.get(0), (MappingProfile.EmptyPolicy) emptyPolicy.getSelectedItem()));
+                candidates.add(engine.bind(variable, sheet(), MappingProfile.Mode.RECORD, value(headerRow), value(titleColumn), value(recordRow), columns.get(0),
+                        (MappingProfile.EmptyPolicy) emptyPolicy.getSelectedItem(), (MappingProfile.SelectionScope) scope.getSelectedItem()));
             }
         }
         if (candidates.isEmpty()) { status.setText("没有唯一同名" + (byColumn ? "行" : "列") + "可建议绑定，请检查标题及选定行列。"); return; }
@@ -431,14 +467,14 @@ public final class DataExtractionPanel extends JPanel {
         }
     }
     private void schedulePreview() {
-        ++previewSequence; previewPending = true; apply.setEnabled(false); previewTimer.restart();
+        ++previewSequence; previewPending = true; applyCurrent.setEnabled(false); apply.setEnabled(false); previewTimer.restart();
         selection.setText("正在检查选定行列及替换内容…当前模板变量尚未因本次选择而修改。");
         undo.setEnabled(session.canUndoImport());
     }
     public void rebuildPreview() {
         previewTimer.stop(); long request = ++previewSequence;
         SpreadsheetData source = workbook; MappingProfile rules = profile; var variables = session.variables();
-        String activeSheet = Objects.toString(sheets.getSelectedItem(), ""); int record = value(recordRow), column = value(recordColumn);
+        String activeSheet = Objects.toString(sheets.getSelectedItem(), ""); int record = globalRecordRow, column = globalRecordColumn;
         Set<MappingProfile.Binding> fixed = Set.copyOf(confirmedFixed);
         MappingProfile.Binding candidate = null; String candidateError = "";
         try { candidate = editorBinding(); } catch (IllegalArgumentException e) { candidateError = e.getMessage(); }
@@ -447,7 +483,8 @@ public final class DataExtractionPanel extends JPanel {
         final String selectedVariable = targetVariable;
         MappingProfile.Binding savedEditor = rules.get(selectedVariable);
         final boolean pending = editor != null ? !editor.equals(savedEditor) : sourcePicked || (savedEditor != null
-                && (savedEditor.mode() != mode.getSelectedItem() || savedEditor.emptyPolicy() != emptyPolicy.getSelectedItem()));
+                && (savedEditor.mode() != mode.getSelectedItem() || savedEditor.emptyPolicy() != emptyPolicy.getSelectedItem()
+                || savedEditor.selectionScope() != scope.getSelectedItem()));
         final boolean confirmedEditor = sourcePicked || (savedEditor != null && fixed.contains(savedEditor));
         tasks.cancelKind("mapping-preview");
         if (source == null) {
@@ -468,7 +505,7 @@ public final class DataExtractionPanel extends JPanel {
                     previews = result.saved(); previewPending = false; draftPending = result.draft();
                     showPreviews(); showReplacement(result, selectedVariable);
                 },
-                error -> { if (request == previewSequence) { previewPending = false; apply.setEnabled(false); status.setText("映射检查失败：" + error.getMessage()); selection.setText("映射检查失败：" + error.getMessage()); } },
+                error -> { if (request == previewSequence) { previewPending = false; applyCurrent.setEnabled(false); apply.setEnabled(false); status.setText("映射检查失败：" + error.getMessage()); selection.setText("映射检查失败：" + error.getMessage()); } },
                 () -> { if (request == previewSequence) { previewPending = true; status.setText("映射检查已取消，请修改选择或刷新表格后重试。"); selection.setText("检查已取消，尚未应用。请修改选择或刷新表格后重试。"); } });
     }
     private void showReplacement(PreviewResult result, String variable) {
@@ -476,12 +513,11 @@ public final class DataExtractionPanel extends JPanel {
         if (p == null) {
             selection.setText("模板「" + templateName + "」 · 变量「" + variable + "」\n" + result.error() + "\n上方映射表显示已保存映射；尚未应用。"); return;
         }
-        String origin = p.match() == null ? "尚未找到有效来源" : "工作表「" + p.match().sheet().name() + "」第 " + (p.match().row() + 1)
-                + " 行、" + columnName(p.match().column()) + " 列（" + SpreadsheetData.address(p.match().row(), p.match().column()) + "），内容：" + displayValue(p.display());
+        String origin = p.match() == null ? "尚未找到有效来源" : "数据来源：" + p.source() + "，内容：" + displayValue(p.display());
         String destination = "模板「" + templateName + "」的变量「" + p.variable() + "」，原值：" + displayValue(p.oldValue());
         String outcome = !p.error().isEmpty() ? "无法填入：" + p.error() : p.apply()
                 ? "将填入：" + displayValue(p.value()) + "；" + p.status() : p.status() + "，不替换现有内容。";
-        String state = result.draft() ? "这是待保存的映射预览；请先点击“添加／更新映射”，再应用。" : "以上为已保存映射的取值预览；点击“应用到模板变量”才会填入。";
+        String state = result.draft() ? "这是待保存的映射预览；请先点击“添加／更新映射”，再应用。" : "以上为已保存映射的取值预览；可应用当前变量或全部变量。";
         if (fileChanged) state = "源文件已变化，此预览不可应用，请先刷新表格。";
         selection.setText(origin + "\n" + destination + "\n" + outcome + "\n" + state);
         selection.setCaretPosition(0);
@@ -494,13 +530,22 @@ public final class DataExtractionPanel extends JPanel {
     private void showPreviews() {
         updating = true;
         try { mappings.setModel(new AbstractTableModel() {
-            final String[] names = {"模板变量（点击选择）", "数据来源 →", "单元格显示", "将填入的值", "当前变量值", "状态／问题"};
+            final String[] names = {"模板变量（点击选择）", "定位方式", "选定范围", "数据来源 →", "将填入的值", "当前变量值", "状态／问题"};
             public int getRowCount() { return previews.size(); }
             public int getColumnCount() { return names.length; }
             public String getColumnName(int column) { return names[column]; }
             public Object getValueAt(int row, int column) {
                 var p = previews.get(row);
-                return switch (column) { case 0 -> p.variable(); case 1 -> p.source(); case 2 -> p.display(); case 3 -> p.value(); case 4 -> p.oldValue(); default -> p.error().isEmpty() ? p.status() : p.error(); };
+                MappingProfile.Binding binding = profile.get(p.variable());
+                return switch (column) {
+                    case 0 -> p.variable();
+                    case 1 -> binding == null ? "手工填写" : binding.mode().toString();
+                    case 2 -> selectionDescription(binding);
+                    case 3 -> p.source();
+                    case 4 -> p.value();
+                    case 5 -> p.oldValue();
+                    default -> p.error().isEmpty() ? p.status() : p.error();
+                };
             }
         });
             for (int r = 0; r < previews.size(); r++) if (previews.get(r).variable().equals(targetVariable)) { mappings.setRowSelectionInterval(r, r); break; }
@@ -511,22 +556,40 @@ public final class DataExtractionPanel extends JPanel {
         long orphan = profile.bindings().stream().filter(b -> !session.variables().containsKey(b.variable())).count();
         status.setText(fileChanged ? "源文件已变化，请刷新表格后重新检查。当前变量未被修改。" : previews.size() + " 个变量：" + ready + " 个可应用，" + manual + " 个手工填写，" + errors + " 个需要处理" + (orphan > 0 ? "；另有 " + orphan + " 条已不在模板中的映射（保留但不应用）" : ""));
         if (!loadFailure.isEmpty() && !fileChanged) status.setText(loadFailure + "；" + status.getText());
-        apply.setEnabled(!previewPending && !draftPending && !fileChanged && errors == 0 && ready > 0 && !tasks.hasTask("excel-load"));
+        MappingEngine.Preview selected = previews.stream().filter(p -> p.variable().equals(targetVariable)).findFirst().orElse(null);
+        boolean available = !previewPending && !draftPending && !fileChanged && !tasks.hasTask("excel-load");
+        applyCurrent.setEnabled(available && selected != null && selected.error().isEmpty() && selected.apply());
+        apply.setEnabled(available && errors == 0 && ready > 0);
         undo.setEnabled(session.canUndoImport());
     }
+    private String selectionDescription(MappingProfile.Binding binding) {
+        if (binding == null || (binding.mode() != MappingProfile.Mode.RECORD && binding.mode() != MappingProfile.Mode.COLUMN_RECORD)) return "—";
+        boolean local = binding.selectionScope() == MappingProfile.SelectionScope.LOCAL;
+        String position = binding.mode() == MappingProfile.Mode.RECORD
+                ? "第 " + ((local ? binding.row() : globalRecordRow) + 1) + " 行"
+                : columnName(local ? binding.column() : globalRecordColumn) + " 列";
+        return (local ? "仅此映射：" : "全部同类映射：") + position;
+    }
+    public void applyCurrentPreview() { applyPreviews(false); }
     public void applyPreview() {
+        applyPreviews(true);
+    }
+    private void applyPreviews(boolean all) {
         if (previewPending || workbook == null || tasks.hasTask("excel-load")) return;
         if (draftPending) { status.setText("请先添加／更新当前映射，或重新选择已保存映射后应用。"); return; }
         prepareApply.run();
         if (previewPending) { status.setText("模板内容有变化，正在重新检查映射；完成后请再次应用。"); return; }
         checkFileChanged(); if (fileChanged) return;
-        if (previews.stream().anyMatch(p -> !p.error().isEmpty())) { status.setText("请先修复有问题的映射。"); return; }
+        List<MappingEngine.Preview> chosen = all ? previews : previews.stream().filter(p -> p.variable().equals(targetVariable)).toList();
+        if (chosen.isEmpty() || profile.get(targetVariable) == null && !all) { status.setText("当前变量使用手工填写，没有可以应用的映射。"); return; }
+        if (chosen.stream().anyMatch(p -> !p.error().isEmpty())) { status.setText(all ? "请先修复有问题的映射，再应用全部变量。" : "当前变量的映射需要处理：" + chosen.get(0).error()); return; }
         Map<String, String> values = new LinkedHashMap<>(), sources = new LinkedHashMap<>();
-        for (var p : previews) if (p.apply()) {
+        for (var p : chosen) if (p.apply()) {
             if (!session.variable(p.variable()).value().equals(p.oldValue())) { schedulePreview(); return; }
             values.put(p.variable(), p.value()); sources.put(p.variable(), workbook.path().getFileName() + " / " + p.source());
         }
-        try { session.applyImportedValues(values, sources); status.setText("已填入 " + values.size() + " 个变量，可前往“模板填充”调整并生成。"); schedulePreview(); }
+        if (values.isEmpty()) { status.setText(all ? "没有需要填入的变量。" : "当前变量无需修改，已按空值规则保留原值。"); return; }
+        try { session.applyImportedValues(values, sources); status.setText(all ? "已填入 " + values.size() + " 个变量，可前往“模板填充”调整并生成。" : "已填入当前变量「" + targetVariable + "」。"); schedulePreview(); }
         catch (IllegalArgumentException e) { status.setText("未应用：" + e.getMessage()); }
     }
     private void undoImport() {
@@ -546,7 +609,7 @@ public final class DataExtractionPanel extends JPanel {
         if (workbook == null || fileChanged) return;
         try { fileChanged = Files.getLastModifiedTime(workbook.path()).toMillis() != workbook.modified() || Files.size(workbook.path()) != workbook.size(); }
         catch (Exception e) { fileChanged = true; }
-        if (fileChanged) { apply.setEnabled(false); status.setText("源文件已更新或不可访问，请刷新表格；现有变量保持原值。"); selection.setText("源文件已更新或不可访问，当前取值预览已失效。请先刷新表格；现有模板变量保持原值。"); }
+        if (fileChanged) { applyCurrent.setEnabled(false); apply.setEnabled(false); status.setText("源文件已更新或不可访问，请刷新表格；现有变量保持原值。"); selection.setText("源文件已更新或不可访问，当前取值预览已失效。请先刷新表格；现有模板变量保持原值。"); }
     }
     private static Path directory(String saved) {
         try { if (saved != null && Files.isDirectory(Path.of(saved))) return Path.of(saved); } catch (RuntimeException ignored) { }

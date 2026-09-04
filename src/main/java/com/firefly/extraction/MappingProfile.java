@@ -18,11 +18,21 @@ public record MappingProfile(List<Binding> bindings) {
         EmptyPolicy(String label) { this.label = label; }
         public String toString() { return label; }
     }
+    public enum SelectionScope {
+        GLOBAL("全部同类映射"), LOCAL("仅此映射");
+        private final String label;
+        SelectionScope(String label) { this.label = label; }
+        public String toString() { return label; }
+    }
     public record Binding(String variable, String sheet, Mode mode, int headerRow, int titleColumn,
                           int row, int column, String rowTitle, String columnTitle,
-                          List<String> headers, String fixedRowTitle, EmptyPolicy emptyPolicy) {
+                          List<String> headers, String fixedRowTitle, EmptyPolicy emptyPolicy, SelectionScope selectionScope) {
         public Binding { headers = List.copyOf(headers); }
-        public Binding withEmptyPolicy(EmptyPolicy value) { return new Binding(variable, sheet, mode, headerRow, titleColumn, row, column, rowTitle, columnTitle, headers, fixedRowTitle, value); }
+        public Binding withSettings(EmptyPolicy policy, SelectionScope scope, int selectedRow, int selectedColumn) {
+            return new Binding(variable, sheet, mode, headerRow, titleColumn, selectedRow, selectedColumn,
+                    rowTitle, columnTitle, headers, fixedRowTitle, policy, scope);
+        }
+        public Binding withEmptyPolicy(EmptyPolicy value) { return withSettings(value, selectionScope, row, column); }
     }
     public MappingProfile put(Binding binding) {
         List<Binding> next = new ArrayList<>(bindings);
@@ -40,9 +50,9 @@ public record MappingProfile(List<Binding> bindings) {
             item.put("headerRow", b.headerRow()); item.put("titleColumn", b.titleColumn());
             item.put("row", b.row()); item.put("column", b.column()); item.put("rowTitle", b.rowTitle());
             item.put("columnTitle", b.columnTitle()); item.put("headers", b.headers()); item.put("fixedRowTitle", b.fixedRowTitle());
-            item.put("emptyPolicy", b.emptyPolicy().name()); items.add(item);
+            item.put("emptyPolicy", b.emptyPolicy().name()); item.put("selectionScope", b.selectionScope().name()); items.add(item);
         }
-        return Map.of("version", 3, "bindings", items);
+        return Map.of("version", 4, "bindings", items);
     }
     public static MappingProfile fromJson(Object value) {
         if (!(value instanceof Map<?, ?> root) || !(root.get("bindings") instanceof List<?> items)) return EMPTY;
@@ -56,10 +66,13 @@ public record MappingProfile(List<Binding> bindings) {
                 bindings.add(new Binding(variable, string(m, "sheet"), Mode.valueOf(string(m, "mode")),
                         number(m, "headerRow"), number(m, "titleColumn"), number(m, "row"), number(m, "column"),
                         string(m, "rowTitle"), string(m, "columnTitle"), headers, string(m, "fixedRowTitle"),
-                        readEmptyPolicy(string(m, "emptyPolicy"))));
+                        readEmptyPolicy(string(m, "emptyPolicy")), readSelectionScope(string(m, "selectionScope"))));
             } catch (IllegalArgumentException ignored) { /* 一条损坏的配置不影响其他映射。 */ }
         }
         return new MappingProfile(bindings);
+    }
+    private static SelectionScope readSelectionScope(String value) {
+        return value.isBlank() ? SelectionScope.GLOBAL : SelectionScope.valueOf(value);
     }
     private static EmptyPolicy readEmptyPolicy(String value) {
         // 旧规则不再清空文本，也不将原本要求报错的空白静默转换为 0。

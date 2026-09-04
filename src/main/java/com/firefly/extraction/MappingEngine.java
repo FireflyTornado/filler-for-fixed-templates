@@ -5,7 +5,8 @@ import java.util.*;
 
 /** 纯映射解析：只返回预览，不修改会话。重名、歧义、缺失都不猜测。 */
 public final class MappingEngine {
-    public record Match(SpreadsheetData.Sheet sheet, int row, int column, String note) { }
+    public record Match(SpreadsheetData.Sheet sheet, int row, int column,
+                        String rowTitle, String columnTitle, String note) { }
     public record Preview(String variable, String source, String display, String value, String oldValue,
                           String status, String error, boolean apply, boolean formula, Match match) { }
 
@@ -22,12 +23,12 @@ public final class MappingEngine {
             }
             Match match = null;
             SpreadsheetData.Cell cell = SpreadsheetData.Cell.EMPTY;
-            String source = b.sheet() + " / " + SpreadsheetData.address(b.row(), b.column());
+            String source = "原绑定位置：" + sourceText(b.sheet(), b.row(), b.column(), b.rowTitle(), b.columnTitle());
             try {
                 if (book == null) throw new IllegalArgumentException("请先打开 Excel 文件");
                 match = resolve(book, b, activeSheet, recordRow, recordColumn, confirmedFixed.contains(b), checkpoint);
                 cell = match.sheet().cell(match.row(), match.column());
-                source = match.sheet().name() + " / " + SpreadsheetData.address(match.row(), match.column());
+                source = sourceText(match.sheet().name(), match.row(), match.column(), match.rowTitle(), match.columnTitle());
                 if (!cell.error().isEmpty()) throw new IllegalArgumentException(cell.error());
                 if (cell.blank()) {
                     if (b.emptyPolicy() == MappingProfile.EmptyPolicy.KEEP) {
@@ -56,6 +57,11 @@ public final class MappingEngine {
 
     public MappingProfile.Binding bind(String variable, SpreadsheetData.Sheet sheet, MappingProfile.Mode mode,
                                        int headerRow, int titleColumn, int row, int column, MappingProfile.EmptyPolicy policy) {
+        return bind(variable, sheet, mode, headerRow, titleColumn, row, column, policy, MappingProfile.SelectionScope.GLOBAL);
+    }
+    public MappingProfile.Binding bind(String variable, SpreadsheetData.Sheet sheet, MappingProfile.Mode mode,
+                                       int headerRow, int titleColumn, int row, int column, MappingProfile.EmptyPolicy policy,
+                                       MappingProfile.SelectionScope selectionScope) {
         if (row < 0 || column < 0 || row >= sheet.rows() || column >= sheet.columns()) throw new IllegalArgumentException("请选择有效单元格");
         String rowTitle = SpreadsheetData.normalize(sheet.cell(row, titleColumn).display());
         String colTitle = SpreadsheetData.normalize(sheet.cell(headerRow, column).display());
@@ -65,7 +71,7 @@ public final class MappingEngine {
         if (mode == MappingProfile.Mode.COLUMN_RECORD && (rowTitle.isBlank() || column <= titleColumn)) throw new IllegalArgumentException("请检查“行标题所在列”设置；所选行需要标题，选定列必须位于标题右侧");
         return new MappingProfile.Binding(variable, sheet.name(), mode, headerRow, titleColumn, row, column,
                 rowTitle, colTitle, mode == MappingProfile.Mode.COLUMN_RECORD ? sheet.rowTitles(titleColumn) : sheet.headers(headerRow),
-                column == titleColumn ? "" : rowTitle, policy);
+                column == titleColumn ? "" : rowTitle, policy, selectionScope);
     }
 
     public Match resolve(SpreadsheetData book, MappingProfile.Binding binding, String activeSheet, int recordRow, int recordColumn,
@@ -74,20 +80,22 @@ public final class MappingEngine {
         for (SpreadsheetData.Sheet sheet : book.sheets()) {
             checkpoint.run();
             if (binding.mode() == MappingProfile.Mode.COLUMN_RECORD) {
-                if (!sheet.name().equals(activeSheet) || recordColumn < 0 || recordColumn >= sheet.columns()) continue;
+                int selectedColumn = binding.selectionScope() == MappingProfile.SelectionScope.LOCAL ? binding.column() : recordColumn;
+                if (!sheet.name().equals(activeSheet) || selectedColumn < 0 || selectedColumn >= sheet.columns()) continue;
                 Map<Integer, List<String>> titleContexts = new HashMap<>();
                 for (var entry : sheet.cells().entrySet()) {
                     checkpoint.run();
                     if (!SpreadsheetData.normalize(entry.getValue().display()).equals(binding.rowTitle())) continue;
                     int r = (int) (entry.getKey() >> 32), c = (int) (long) entry.getKey();
-                    if (recordColumn <= c) continue;
+                    if (selectedColumn <= c) continue;
                     List<String> titles = titleContexts.computeIfAbsent(c, sheet::rowTitles);
                     // 纵向合并或重复行标题都不能唯一指向一行。
                     if (titles.stream().filter(binding.rowTitle()::equals).count() != 1) continue;
                     Set<String> context = new HashSet<>(binding.headers());
                     context.remove(""); context.remove(binding.rowTitle());
                     if (!context.isEmpty() && titles.stream().noneMatch(context::contains)) continue;
-                    candidates.add(new Match(sheet, r, recordColumn, moved(binding, r, recordColumn)));
+                    int titleRow = findTitleRow(sheet, binding, c);
+                    candidates.add(match(sheet, r, selectedColumn, titleRow, c, moved(binding, r, selectedColumn)));
                 }
                 continue;
             }
@@ -97,7 +105,7 @@ public final class MappingEngine {
                         && (binding.fixedRowTitle().isBlank() || SpreadsheetData.normalize(sheet.cell(binding.row(), binding.titleColumn()).display()).equals(binding.fixedRowTitle()));
                 if (binding.row() < sheet.rows() && binding.column() < sheet.columns()
                         && ((confirmedFixed && sheet.name().equals(binding.sheet())) || (anchors && same))) {
-                    candidates.add(new Match(sheet, binding.row(), binding.column(), "固定坐标"));
+                    candidates.add(match(sheet, binding.row(), binding.column(), binding.headerRow(), binding.titleColumn(), "固定坐标"));
                 }
                 continue;
             }
@@ -114,8 +122,10 @@ public final class MappingEngine {
                 // 合并表头覆盖多个数据列时不能把任一列静默绑定到左上角。
                 if (sheet.headers(header[0]).stream().filter(binding.columnTitle()::equals).count() != 1) continue;
                 if (binding.mode() == MappingProfile.Mode.RECORD) {
-                    if (!sheet.name().equals(activeSheet) || recordRow <= header[0] || recordRow >= sheet.rows()) continue;
-                    candidates.add(new Match(sheet, recordRow, header[1], moved(binding, recordRow, header[1])));
+                    int selectedRow = binding.selectionScope() == MappingProfile.SelectionScope.LOCAL ? binding.row() : recordRow;
+                    if (!sheet.name().equals(activeSheet) || selectedRow <= header[0] || selectedRow >= sheet.rows()) continue;
+                    int actualTitleColumn = findTitleColumn(sheet, header[0], binding);
+                    candidates.add(match(sheet, selectedRow, header[1], header[0], actualTitleColumn, moved(binding, selectedRow, header[1])));
                 } else {
                     // 行标题列也可能移动：有标题时按其标题找回，否则沿用原列。
                     List<Integer> titleColumns = new ArrayList<>();
@@ -127,7 +137,7 @@ public final class MappingEngine {
                             int r = (int) (cell.getKey() >> 32), c = (int) (long) cell.getKey();
                             if (c == titleColumn && r > header[0] && SpreadsheetData.normalize(cell.getValue().display()).equals(binding.rowTitle())) {
                                 boolean mergedRows = sheet.merges().stream().anyMatch(m -> m.firstRow() == r && m.lastRow() > r && titleColumn >= m.firstColumn() && titleColumn <= m.lastColumn());
-                                if (!mergedRows) candidates.add(new Match(sheet, r, header[1], moved(binding, r, header[1])));
+                                if (!mergedRows) candidates.add(match(sheet, r, header[1], header[0], titleColumn, moved(binding, r, header[1])));
                             }
                         }
                     }
@@ -141,6 +151,26 @@ public final class MappingEngine {
                 : "找到多个同名标题或相似工作表，请重新指定来源");
         return candidates.get(0);
     }
+    private Match match(SpreadsheetData.Sheet sheet, int row, int column, int titleRow, int titleColumn, String note) {
+        return new Match(sheet, row, column, sheet.cell(row, titleColumn).display(), sheet.cell(titleRow, column).display(), note);
+    }
+    private int findTitleColumn(SpreadsheetData.Sheet sheet, int headerRow, MappingProfile.Binding binding) {
+        String titleHeader = binding.titleColumn() < binding.headers().size() ? binding.headers().get(binding.titleColumn()) : "";
+        if (!titleHeader.isBlank()) for (int c = 0; c < sheet.columns(); c++)
+            if (SpreadsheetData.normalize(sheet.cell(headerRow, c).display()).equals(titleHeader)) return c;
+        return Math.min(binding.titleColumn(), Math.max(0, sheet.columns() - 1));
+    }
+    private int findTitleRow(SpreadsheetData.Sheet sheet, MappingProfile.Binding binding, int titleColumn) {
+        String title = binding.headerRow() < binding.headers().size() ? binding.headers().get(binding.headerRow()) : "";
+        if (!title.isBlank()) for (int r = 0; r < sheet.rows(); r++)
+            if (SpreadsheetData.normalize(sheet.cell(r, titleColumn).display()).equals(title)) return r;
+        return Math.min(binding.headerRow(), Math.max(0, sheet.rows() - 1));
+    }
+    private String sourceText(String sheet, int row, int column, String rowTitle, String columnTitle) {
+        return sheet + " / " + SpreadsheetData.address(row, column) + " / 行标题：" + shownTitle(rowTitle)
+                + " / 列标题：" + shownTitle(columnTitle);
+    }
+    private String shownTitle(String value) { return value == null || value.isBlank() ? "（空）" : value; }
     private boolean matchesHeaderContext(SpreadsheetData.Sheet sheet, int row, MappingProfile.Binding binding) {
         Set<String> actual = new HashSet<>(sheet.headers(row));
         String rowHeader = binding.titleColumn() < binding.headers().size() ? binding.headers().get(binding.titleColumn()) : "";

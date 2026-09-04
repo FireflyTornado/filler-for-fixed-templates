@@ -21,7 +21,8 @@ final class SpreadsheetPreview extends JScrollPane {
         super(grid);
         this.grid = grid;
         rowTitles.setAutoResizeMode(JTable.AUTO_RESIZE_OFF);
-        rowTitles.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        rowTitles.setRowSelectionAllowed(false);
+        rowTitles.setCellSelectionEnabled(false);
         rowTitles.setTableHeader(null);
         rowTitles.setFocusable(false);
         columnTitles.setAutoCreateColumnsFromModel(false);
@@ -30,7 +31,6 @@ final class SpreadsheetPreview extends JScrollPane {
         columnTitles.setTableHeader(null);
         columnTitles.setFocusable(false);
         columnTitles.setRowSelectionAllowed(false);
-        columnTitles.setColumnSelectionAllowed(false);
         for (JTable table : new JTable[]{rowTitles, columnTitles}) {
             DefaultTableCellRenderer renderer = new DefaultTableCellRenderer() {
                 @Override public Component getTableCellRendererComponent(JTable table, Object value, boolean selected,
@@ -62,10 +62,6 @@ final class SpreadsheetPreview extends JScrollPane {
             }
         };
         grid.getTableHeader().addMouseListener(columns); columnTitles.addMouseListener(columns);
-        grid.getSelectionModel().addListSelectionListener(event -> {
-            int row = grid.getSelectedRow();
-            if (row >= 0 && row < rowTitles.getRowCount()) rowTitles.setRowSelectionInterval(row, row); else rowTitles.clearSelection();
-        });
         grid.addPropertyChangeListener("rowHeight", event -> syncRowHeights());
         grid.addPropertyChangeListener("font", event -> syncRowHeights());
         syncRowHeights();
@@ -81,6 +77,10 @@ final class SpreadsheetPreview extends JScrollPane {
     }
     private static JTable tooltipTable(boolean sharedColumns) {
         return new JTable() {
+            @Override public boolean isCellSelected(int row, int column) {
+                // 标题栏与数据表共享列模型以同步列宽，但标题栏自身不显示选择色。
+                return false;
+            }
             @Override public void doLayout() {
                 // 列宽由数据表唯一管理；标题行不能按整个视口宽度再次拉伸共享列。
                 if (!sharedColumns) super.doLayout();
