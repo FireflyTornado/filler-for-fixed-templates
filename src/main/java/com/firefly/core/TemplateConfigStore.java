@@ -170,6 +170,10 @@ public final class TemplateConfigStore {
     private void saveMerged(TemplateConfig merged, Map<String, VariableInputState> states)
             throws IOException {
         for (VariableInputState state : states.values()) {
+            // 模板编辑时，占位符中的中间名称也会短暂进入会话。空白的新变量不落盘，
+            // 避免 {{客}} -> {{客户}} 一类输入过程不断扩大配置；已保存变量仍允许
+            // 写入空值，以便用户主动清空内容或只修改类型。
+            if (!merged.variables().containsKey(state.name()) && state.value().isBlank()) continue;
             merged.variables().put(state.name(), new TemplateConfig.Entry(
                     state.type(), state.value()));
         }

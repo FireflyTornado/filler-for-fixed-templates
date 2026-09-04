@@ -44,6 +44,7 @@ public final class TemplateFeatureTests {
         testSessionDrafts();
         testNestedTemplateAndConfigStorage();
         testTemplateConfigWritesOnlyCurrentValue();
+        testBlankNewVariablesAreNotPersisted();
         testDecimalPlacesConfigRoundTripAndFallback();
         testLegacyDraftMigration();
         testIncrementalUnusedVariableCleanup();
@@ -176,6 +177,30 @@ public final class TemplateFeatureTests {
                 "active state persisted");
         assertTrue(!json.contains("drafts") && !json.contains("valuesByType") && !json.contains("原文"),
                 "other session values are not persisted");
+    }
+
+    private static void testBlankNewVariablesAreNotPersisted() throws Exception {
+        Path dir = Files.createTempDirectory("template-config-blank-new");
+        TemplateConfigStore store = new TemplateConfigStore(dir);
+        store.ensureDirectory();
+        Map<String, VariableInputState> editingStates = new LinkedHashMap<>();
+        editingStates.put("客", new VariableInputState("客", VariableType.NUMBER, "", false));
+        editingStates.put("客户", new VariableInputState("客户", VariableType.SHORT_TEXT, "  ", false));
+        editingStates.put("客户名称", new VariableInputState(
+                "客户名称", VariableType.SHORT_TEXT, "萤火公司", false));
+        store.save("demo.txt", editingStates);
+
+        TemplateConfig firstSave = store.load("demo.txt");
+        assertTrue(firstSave.variables().keySet().equals(Set.of("客户名称")),
+                "blank intermediate placeholder names are not persisted");
+
+        store.save("demo.txt", Map.of("客户名称", new VariableInputState(
+                "客户名称", VariableType.MULTILINE_TEXT, "", false)));
+        TemplateConfig cleared = store.load("demo.txt");
+        TemplateConfig.Entry existing = cleared.variables().get("客户名称");
+        assertTrue(existing != null && existing.type() == VariableType.MULTILINE_TEXT,
+                "existing variable type is persisted even when its value is blank");
+        assertEquals("", existing.value(), "existing variable can be explicitly cleared");
     }
 
     private static void testNestedTemplateAndConfigStorage() throws Exception {
