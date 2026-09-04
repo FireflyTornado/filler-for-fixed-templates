@@ -136,8 +136,11 @@ The current scope is `.xlsx`, a single configured header row, and merged-title d
 | `{{=金额*5%}}` | Percentage calculation; `5%` means `0.05` |
 | `{{=[1]*[2]}}` | References variables named `1` and `2`, not numeric constants |
 | `{{=[销售 数量]*[单价-折扣]}}` | Brackets reference names containing spaces or special characters |
+| `\{{Customer}}` | Escaped placeholder; outputs literal `{{Customer}}` without creating or referencing a variable |
 
 Expressions support `+`, `-`, `*`, `/`, `**` (power), postfix `%`, and parentheses. Numeric constants support scientific notation. `{{=1*2}}` multiplies constants. Built-in date variables cannot participate in arithmetic.
+
+Short-text and multiline-text values may also contain placeholders and can be nested. Child variables are collapsed by default; use the arrow beside a variable to expand them. Names are global, so the same variable shares one type and value at every level. Cycles show their reference path and prevent generation, and nesting is limited to 20 levels. Escaping works in the main template and in every text variable. Backslashes immediately before a placeholder use odd/even pairing: `\{{Customer}}` outputs literal `{{Customer}}`, while `\\{{Customer}}` outputs one backslash followed by the resolved Customer value.
 
 Blank manual numeric input is zero. Numbers and expression results are rounded and padded to the template's decimal precision. Excel empty values follow mapping policies instead of this manual-input rule.
 

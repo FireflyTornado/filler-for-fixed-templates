@@ -25,6 +25,7 @@ public final class ApplicationTests {
 
     public static void main(String[] args) throws Exception {
         sessionLifecycle();
+        nestedSessionVariables();
         batchUpdatesAndSnapshots();
         validationAndGenerationSnapshots();
         wordGenerationAndCleanup();
@@ -84,6 +85,29 @@ public final class ApplicationTests {
         check(session.variable("数量").type() == VariableType.NUMBER, "expression variable remains numeric");
         session.rename("renamed.txt", new TemplateConfig("renamed.txt"));
         equal("7", session.variable("数量").value(), "rename preserves working values");
+    }
+
+    private static void nestedSessionVariables() {
+        TemplateConfig config = new TemplateConfig("nested.txt");
+        config.variables().put("正文", new TemplateConfig.Entry(
+                VariableType.MULTILINE_TEXT, "客户：{{客户}}；详情：{{详情}}；示例：\\{{忽略}}"));
+        config.variables().put("客户", new TemplateConfig.Entry(VariableType.SHORT_TEXT, "萤火公司"));
+        config.variables().put("详情", new TemplateConfig.Entry(VariableType.SHORT_TEXT, "数量：{{数量}}"));
+        TemplateSession session = new TemplateSession();
+        session.load("nested.txt", "{{正文}}", config, TemplateParser.parse("{{正文}}"));
+
+        check(session.variables().keySet().equals(new LinkedHashSet<>(
+                        List.of("正文", "客户", "详情", "数量"))),
+                "nested text variables become recursively reachable in display order");
+        check(session.variableViews().stream().map(TemplateSession.VariableView::depth).toList()
+                        .equals(List.of(0, 1, 1, 2)),
+                "nested variable views retain hierarchy depth");
+        check(!session.variables().containsKey("忽略"), "escaped nested placeholder stays inactive");
+
+        session.activateType("数量", VariableType.SHORT_TEXT, "{{正文}}");
+        check(session.hasDependencyErrors()
+                        && session.dependencyErrorMessages().stream().anyMatch(text -> text.contains("正文")),
+                "session detects cycles introduced by nested variable values");
     }
 
     private static void batchUpdatesAndSnapshots() {

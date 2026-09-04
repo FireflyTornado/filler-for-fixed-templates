@@ -45,6 +45,7 @@ public final class TemplateFeatureTests {
         testNestedTemplateAndConfigStorage();
         testTemplateConfigWritesOnlyCurrentValue();
         testBlankNewVariablesAreNotPersisted();
+        testEscapedAndNestedVariables();
         testDecimalPlacesConfigRoundTripAndFallback();
         testLegacyDraftMigration();
         testIncrementalUnusedVariableCleanup();
@@ -56,6 +57,7 @@ public final class TemplateFeatureTests {
         testLegacySyntaxIsIgnoredAndMigrated();
         testDocxLegacyMigrationAcrossRuns();
         testDocxUnifiedDecimalFormatting();
+        testDocxNestedAndEscapedVariables();
         System.out.println("All " + tests + " feature tests passed.");
     }
 
@@ -201,6 +203,37 @@ public final class TemplateFeatureTests {
         assertTrue(existing != null && existing.type() == VariableType.MULTILINE_TEXT,
                 "existing variable type is persisted even when its value is blank");
         assertEquals("", existing.value(), "existing variable can be explicitly cleared");
+    }
+
+    private static void testEscapedAndNestedVariables() {
+        TemplateParser.ParsedTemplate escaped = TemplateParser.parse(
+                "实际：{{客户}}；示例：\\{{示例变量}}；路径：\\\\{{目录}}");
+        assertTrue(escaped.variables().stream().map(TemplateParser.VariableSpec::name).toList()
+                        .equals(java.util.List.of("客户", "目录")),
+                "escaped placeholders are excluded while even backslashes keep placeholders active");
+
+        TemplateRenderer.RenderResult literal = TemplateRenderer.renderUnified(
+                "实际：{{客户}}；示例：\\{{客户}}；路径：\\\\{{客户}}",
+                Map.of("客户", "萤火公司"), Map.of());
+        assertEquals("实际：萤火公司；示例：{{客户}}；路径：\\萤火公司", literal.result(),
+                "escaped placeholders stay literal through rendering");
+
+        Map<String, String> nested = new LinkedHashMap<>();
+        nested.put("通知", "客户：{{客户}}\n明细：{{明细}}\n写法：\\{{不会创建}}");
+        nested.put("客户", "萤火公司");
+        nested.put("明细", "{{数量}} 件，共 {{=数量*单价}} 元");
+        nested.put("数量", "2");
+        nested.put("单价", "3.5");
+        TemplateRenderer.RenderResult expanded = TemplateRenderer.renderUnified(
+                "{{通知}}", nested, Map.of(), Set.of("数量", "单价"), 2);
+        assertEquals("客户：萤火公司\n明细：2.00 件，共 7.00 元\n写法：{{不会创建}}",
+                expanded.result(), "text variables recursively render nested variables and expressions");
+
+        TemplateRenderer.RenderResult cycle = TemplateRenderer.renderUnified(
+                "{{A}}", Map.of("A", "{{B}}", "B", "{{A}}"), Map.of());
+        assertTrue(cycle.hasError() && cycle.error().contains("循环引用")
+                        && cycle.error().contains("A") && cycle.error().contains("B"),
+                "recursive rendering reports every variable in the cycle");
     }
 
     private static void testNestedTemplateAndConfigStorage() throws Exception {
@@ -445,6 +478,24 @@ public final class TemplateFeatureTests {
         assertTrue(progressUpdates[0] > 0, "docx rendering reports progress");
         assertTrue(DocxProcessor.extractText(rendered).contains("1.235 / 2.469"),
                 "docx numeric replacement and expression use unified decimal places");
+    }
+
+    private static void testDocxNestedAndEscapedVariables() throws Exception {
+        Path dir = Files.createTempDirectory("template-docx-nested");
+        Path source = dir.resolve("source.docx"), rendered = dir.resolve("rendered.docx");
+        String xml = """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+                  <w:body><w:p><w:r><w:t>实际：{{通</w:t></w:r><w:r><w:t>知}}；示例：\\{{客户}}</w:t></w:r></w:p></w:body>
+                </w:document>
+                """;
+        DocxProcessor.createDocx(source, xml);
+        TemplateRenderer.RenderResult result = DocxProcessor.renderUnified(source, rendered,
+                Map.of("通知", "客户：{{客户}}；写法：\\{{客户}}", "客户", "萤火公司"), Map.of());
+        assertTrue(!result.hasError(), "docx nested and escaped rendering succeeds");
+        assertTrue(DocxProcessor.extractText(rendered)
+                        .contains("实际：客户：萤火公司；写法：{{客户}}；示例：{{客户}}"),
+                "docx supports nested values and escaped placeholders across runs");
     }
 
     private static void assertFloat(float expected, float actual, String message) {

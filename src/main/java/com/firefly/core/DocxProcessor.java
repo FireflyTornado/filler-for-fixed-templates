@@ -208,6 +208,10 @@ public final class DocxProcessor {
                                                        Set<String> numericVariables,
                                                        int decimalPlaces,
                                                        OperationProgress progress) throws IOException {
+        TemplateRenderer.PreparedValues prepared = TemplateRenderer.prepareValues(
+                values, autoVals, numericVariables, decimalPlaces);
+        if (prepared.error() != null) return new TemplateRenderer.RenderResult(null, prepared.error());
+        Map<String, String> resolvedValues = prepared.values();
         try {
             try (ZipFile zin = new ZipFile(src.toFile(), StandardCharsets.UTF_8);
                  ZipOutputStream zout = new ZipOutputStream(Files.newOutputStream(dst), StandardCharsets.UTF_8)) {
@@ -225,7 +229,7 @@ public final class DocxProcessor {
                         try (InputStream in = zin.getInputStream(e)) {
                             bytes = in.readAllBytes();
                         }
-                        zout.write(processPart(bytes, values, autoVals,
+                        zout.write(processPart(bytes, resolvedValues, autoVals,
                                 numericVariables, decimalPlaces));
                     } else {
                         try (InputStream in = zin.getInputStream(e)) {
@@ -389,14 +393,9 @@ public final class DocxProcessor {
         String text = concat.toString();
 
         List<Match> matches = new ArrayList<>();
-        Matcher m = TemplateConstants.PLACEHOLDER_RE.matcher(text);
-        while (m.find()) {
-            String whole = m.group();
-            String content = m.group(1).trim();
-            if (content.isEmpty()) {
-                continue; // {{}} 原样保留
-            }
-            matches.add(new Match(m.start(), m.end(), whole, content));
+        for (TemplateSyntax.Placeholder placeholder : TemplateSyntax.placeholders(text)) {
+            matches.add(new Match(placeholder.start(), placeholder.end(), placeholder.whole(),
+                    placeholder.content(), placeholder.escaped(), placeholder.literalPrefix()));
         }
         for (int i = matches.size() - 1; i >= 0; i--) {
             applyMatch(matches.get(i), frags, values, autoVals,
@@ -405,7 +404,8 @@ public final class DocxProcessor {
     }
 
     /** 一个占位符匹配（在段落拼接文本中的位置 + 内容）。 */
-    private record Match(int start, int end, String whole, String content) {
+    private record Match(int start, int end, String whole, String content,
+                         boolean escaped, String literalPrefix) {
     }
 
     /** 把单个占位符替换成值。 */
@@ -414,8 +414,16 @@ public final class DocxProcessor {
                                    Set<String> numericVariables, int decimalPlaces)
             throws ExpressionEvaluator.EvalException {
         String value;
+        if (match.escaped()) {
+            replaceRange(match.start(), match.end(), match.literalPrefix() + match.whole(), frags);
+            return;
+        }
+        if (match.content().isEmpty()) {
+            replaceRange(match.start(), match.end(), match.literalPrefix() + match.whole(), frags);
+            return;
+        }
         try {
-            value = TemplateRenderer.resolve(match.whole(), match.content(), values, autoVals,
+            value = match.literalPrefix() + TemplateRenderer.resolve(match.whole(), match.content(), values, autoVals,
                     numericVariables, decimalPlaces);
         } catch (ExpressionEvaluator.EvalException e) {
             String expr = match.content().substring(1).trim();

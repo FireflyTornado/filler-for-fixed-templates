@@ -25,6 +25,9 @@ public record GenerationRequest(long sequence, boolean word, String templateName
 
     public static GenerationRequest capture(long sequence, boolean word, Path sourceFile,
                                             TemplateSession session, LocalDate date) {
+        if (session.hasDependencyErrors()) {
+            throw new IllegalArgumentException(String.join("；", session.dependencyErrorMessages()));
+        }
         VariableValidation.Result validation = VariableValidation.validate(session.variables());
         if (!validation.valid()) throw new IllegalArgumentException("无效数值变量：" + validation.invalidNames());
         return new GenerationRequest(sequence, word, session.templateName(), session.templateText(), sourceFile,

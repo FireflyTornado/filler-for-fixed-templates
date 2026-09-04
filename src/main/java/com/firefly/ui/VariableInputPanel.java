@@ -16,7 +16,10 @@ import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Consumer;
 import java.util.function.IntConsumer;
 
@@ -32,6 +35,9 @@ public final class VariableInputPanel extends JPanel {
     private final ValidationIssueManager issues;
     private final TemplateSession session;
     private Map<String, VariableInputState> states = new LinkedHashMap<>();
+    private List<TemplateSession.VariableView> views = List.of();
+    private final Set<String> expandedVariables = new LinkedHashSet<>();
+    private long displayedSessionId = Long.MIN_VALUE;
     private Runnable commitListener = () -> { };
     private Consumer<String> statusListener = text -> { };
     private IntConsumer decimalPlacesListener = value -> { };
@@ -111,6 +117,13 @@ public final class VariableInputPanel extends JPanel {
     }
 
     public void rebuild(Map<String, VariableInputState> newStates) {
+        String focusedName = focusedVariableName();
+        int focusedCaret = focusedName == null ? -1 : rowByName.get(focusedName).field.getCaretPosition();
+        if (displayedSessionId != session.sessionId()) {
+            displayedSessionId = session.sessionId();
+            expandedVariables.clear();
+        }
+        views = session.variableViews();
         for (String oldName : rowByName.keySet()) issues.remove(issueId(oldName));
         rebuilding = true;
         try {
@@ -127,13 +140,35 @@ public final class VariableInputPanel extends JPanel {
             } else {
                 addHeader(gc);
                 int order = 0;
-                for (VariableInputState state : states.values()) addRow(state, gc, order++);
+                for (TemplateSession.VariableView view : views) {
+                    if (!isVisible(view)) continue;
+                    VariableInputState state = states.get(view.name());
+                    if (state != null) addRow(state, view, gc, order++);
+                }
             }
             gc.gridy++; gc.gridx = 0; gc.weighty = 1; gc.fill = GridBagConstraints.VERTICAL;
             rows.add(new JLabel(), gc);
             rows.revalidate(); rows.repaint();
         } finally { rebuilding = false; }
         refreshAllValidation();
+        if (focusedName != null && rowByName.containsKey(focusedName)) {
+            Row restored = rowByName.get(focusedName);
+            int caret = Math.min(focusedCaret, restored.field.getDocument().getLength());
+            SwingUtilities.invokeLater(() -> {
+                restored.field.requestFocusInWindow();
+                restored.field.setCaretPosition(Math.max(0, caret));
+            });
+        }
+    }
+
+    private String focusedVariableName() {
+        for (Row row : rowByName.values()) if (row.field.isFocusOwner() || row.type.isFocusOwner()) return row.state.name();
+        return null;
+    }
+
+    private boolean isVisible(TemplateSession.VariableView view) {
+        for (String ancestor : view.ancestors()) if (!expandedVariables.contains(ancestor)) return false;
+        return true;
     }
 
     /** 批量更新后只刷新值，不重建控件或触发文本编辑回调。 */
@@ -155,7 +190,8 @@ public final class VariableInputPanel extends JPanel {
         gc.gridy++;
     }
 
-    private void addRow(VariableInputState state, GridBagConstraints gc, int order) {
+    private void addRow(VariableInputState state, TemplateSession.VariableView view,
+                        GridBagConstraints gc, int order) {
         JLabel name = new JLabel(state.name());
         name.setToolTipText(state.name() + " — " + syntaxTooltip(state));
         JComboBox<VariableType> type = new JComboBox<>(VariableType.values());
@@ -169,6 +205,19 @@ public final class VariableInputPanel extends JPanel {
         JLabel warning = new JLabel("⚠");
         warning.setVisible(false);
         warning.getAccessibleContext().setAccessibleName("输入错误");
+        JButton hierarchy = new JButton(view.hasChildren()
+                ? (expandedVariables.contains(state.name()) ? "▼" : "▶") : " ");
+        hierarchy.setMargin(new Insets(0, 2, 0, 2));
+        hierarchy.setBorderPainted(false);
+        hierarchy.setContentAreaFilled(false);
+        hierarchy.setFocusable(view.hasChildren());
+        hierarchy.setEnabled(view.hasChildren());
+        hierarchy.setToolTipText(view.hasChildren()
+                ? (expandedVariables.contains(state.name()) ? "收起下级变量" : "展开下级变量") : null);
+        JPanel nameCell = new JPanel(new FlowLayout(FlowLayout.LEFT, 2, 0));
+        nameCell.setBorder(BorderFactory.createEmptyBorder(0, view.depth() * 18, 0, 0));
+        nameCell.add(hierarchy);
+        nameCell.add(name);
         Row row = new Row(state, type, field, expand, warning,
                 field.getBackground(), field.getBorder(), order);
         row.nameLabel = name;
@@ -181,7 +230,7 @@ public final class VariableInputPanel extends JPanel {
         installValueFieldTraversal(row);
         installSessionValueMenu(row, name);
 
-        gc.gridx = 0; gc.weightx = 0; gc.fill = GridBagConstraints.NONE; rows.add(name, gc);
+        gc.gridx = 0; gc.weightx = 0; gc.fill = GridBagConstraints.NONE; rows.add(nameCell, gc);
         gc.gridx = 1; rows.add(type, gc);
         gc.gridx = 2; gc.weightx = 1; gc.fill = GridBagConstraints.HORIZONTAL; rows.add(field, gc);
         gc.gridx = 3; gc.weightx = 0; gc.fill = GridBagConstraints.NONE; rows.add(expand, gc);
@@ -189,6 +238,11 @@ public final class VariableInputPanel extends JPanel {
         gc.gridy++;
 
         type.addActionListener(e -> typeChanged(row));
+        hierarchy.addActionListener(e -> {
+            if (expandedVariables.remove(state.name())) { }
+            else expandedVariables.add(state.name());
+            rebuild(session.variables());
+        });
         field.getDocument().addDocumentListener(new DocumentListener() {
             public void insertUpdate(DocumentEvent e) { valueChanged(row); }
             public void removeUpdate(DocumentEvent e) { valueChanged(row); }
@@ -318,10 +372,15 @@ public final class VariableInputPanel extends JPanel {
         String source = session.sourceDescription(row.state.name());
         row.nameLabel.setText(row.state.name() + (source.isEmpty() ? "" : " ↗"));
         row.nameLabel.setToolTipText(source.isEmpty() ? row.state.name() + " — " + syntaxTooltip(row.state) : source);
-        boolean invalid = row.state.type() == VariableType.NUMBER
+        String dependencyError = session.dependencyError(row.state.name());
+        boolean invalidNumber = row.state.type() == VariableType.NUMBER
                 && (row.state.requiresNumericAttention()
                 || ValueNormalizer.normalize(row.state.value()) == null);
-        String message = "变量“" + row.state.name() + "”需要填写有效数字。";
+        int hiddenErrors = hiddenDescendantErrorCount(row.state.name());
+        boolean invalid = invalidNumber || !dependencyError.isEmpty() || hiddenErrors > 0;
+        String message = !dependencyError.isEmpty() ? dependencyError
+                : invalidNumber ? "变量“" + row.state.name() + "”需要填写有效数字。"
+                : "下级变量存在 " + hiddenErrors + " 个错误，请展开查看。";
         row.field.setBackground(invalid ? errorBackground(row.normalBackground) : row.normalBackground);
         row.field.setBorder(invalid ? BorderFactory.createLineBorder(new Color(190, 55, 55), 2)
                 : row.normalBorder);
@@ -340,6 +399,28 @@ public final class VariableInputPanel extends JPanel {
     }
 
     public void refreshAllValidation() { for (Row row : rowByName.values()) validateRow(row); }
+    private int hiddenDescendantErrorCount(String parent) {
+        if (expandedVariables.contains(parent)) return 0;
+        int count = 0;
+        for (TemplateSession.VariableView view : views) {
+            if (!view.ancestors().contains(parent)) continue;
+            VariableInputState state = states.get(view.name());
+            if (state == null) continue;
+            boolean invalidNumber = state.type() == VariableType.NUMBER
+                    && (state.requiresNumericAttention() || ValueNormalizer.normalize(state.value()) == null);
+            if (invalidNumber || !session.dependencyError(view.name()).isEmpty()) count++;
+        }
+        return count;
+    }
+
+    public void revealVariables(java.util.Collection<String> names) {
+        boolean changed = false;
+        for (TemplateSession.VariableView view : views) {
+            if (!names.contains(view.name())) continue;
+            changed |= expandedVariables.addAll(view.ancestors());
+        }
+        if (changed) rebuild(session.variables());
+    }
     public void scrollToVariable(String name) {
         Row row = rowByName.get(name);
         if (row != null) rows.scrollRectToVisible(row.field.getParent() == rows
@@ -350,6 +431,12 @@ public final class VariableInputPanel extends JPanel {
     public void locateNextIssue() {
         ValidationIssue issue = issues.next();
         if (issue == null) return;
+        if (issue.variableName() != null && hiddenDescendantErrorCount(issue.variableName()) > 0) {
+            expandedVariables.add(issue.variableName());
+            rebuild(session.variables());
+            locateNextIssue();
+            return;
+        }
         if (issue.variableName() != null) scrollToVariable(issue.variableName());
         JComponent target = issue.targetComponent();
         if (target == null || !target.isDisplayable()) {

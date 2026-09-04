@@ -6,10 +6,9 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
-import java.util.regex.Matcher;
 
 /**
- * 模板占位符解析：提取需要填写的变量与自动变量。
+ * 模板占位符解析：提取需要填写的变量与自动变量；反斜杠转义的占位符按纯文本忽略。
  */
 public final class TemplateParser {
 
@@ -43,9 +42,9 @@ public final class TemplateParser {
         Set<String> expressionVariables = new LinkedHashSet<>();
         int exprCount = 0;
 
-        Matcher m = TemplateConstants.PLACEHOLDER_RE.matcher(template);
-        while (m.find()) {
-            String content = m.group(1).trim();
+        for (TemplateSyntax.Placeholder placeholder : TemplateSyntax.placeholders(template)) {
+            if (placeholder.escaped()) continue;
+            String content = placeholder.content();
             if (content.isEmpty()) {
                 continue;
             }

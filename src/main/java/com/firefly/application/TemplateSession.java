@@ -11,7 +11,16 @@ import java.util.function.Consumer;
  * 加载/同步由调用方刷新整个视图；变量编辑通过 Change 通知调用方。
  */
 public final class TemplateSession {
-    public enum Change { VALUE, TYPE, BATCH, DECIMAL_PLACES }
+    private static final int MAX_NESTING_DEPTH = 20;
+    public enum Change { VALUE, TYPE, STRUCTURE, BATCH, DECIMAL_PLACES }
+
+    /** 变量在主模板首次可达位置的展示路径；ancestors 不包含变量自身。 */
+    public record VariableView(String name, List<String> ancestors, boolean hasChildren) {
+        public VariableView {
+            ancestors = List.copyOf(ancestors);
+        }
+        public int depth() { return ancestors.size(); }
+    }
 
     private String templateName = "", templateText = "";
     private TemplateConfig persistedConfig = new TemplateConfig("");
@@ -19,6 +28,10 @@ public final class TemplateSession {
     private final Map<String, VariableInputState> sessionVariables = new LinkedHashMap<>();
     private int decimalPlaces = NumericFormatter.DEFAULT_DECIMAL_PLACES;
     private long templateRevision, inputRevision;
+    private long sessionId;
+    private TemplateParser.ParsedTemplate rootParsed = TemplateParser.parse("");
+    private List<VariableView> variableViews = List.of();
+    private Map<String, String> dependencyErrors = Map.of();
     private Consumer<Change> changeListener = change -> { };
     public record Source(String location, String importedValue, VariableType type) { }
     private record Undo(VariableInputState before, Source previousSource, String appliedValue, VariableType type) { }
@@ -39,6 +52,14 @@ public final class TemplateSession {
     public int decimalPlaces() { return decimalPlaces; }
     public long templateRevision() { return templateRevision; }
     public long inputRevision() { return inputRevision; }
+    public long sessionId() { return sessionId; }
+    public List<VariableView> variableViews() { return variableViews; }
+    public String dependencyError(String name) { return dependencyErrors.getOrDefault(name, ""); }
+    public boolean hasDependencyErrors() { return !dependencyErrors.isEmpty(); }
+    public Collection<String> dependencyErrorMessages() {
+        return List.copyOf(new LinkedHashSet<>(dependencyErrors.values()));
+    }
+    public Set<String> dependencyErrorNames() { return Set.copyOf(dependencyErrors.keySet()); }
 
     public void setChangeListener(Consumer<Change> listener) {
         changeListener = Objects.requireNonNull(listener);
@@ -48,6 +69,7 @@ public final class TemplateSession {
     public void load(String name, String text, TemplateConfig config, TemplateParser.ParsedTemplate parsed) {
         sessionVariables.clear();
         sources.clear(); undo.clear();
+        sessionId++;
         templateName = name;
         replaceTemplate(text, config, parsed);
     }
@@ -59,6 +81,7 @@ public final class TemplateSession {
 
     private void replaceTemplate(String text, TemplateConfig config, TemplateParser.ParsedTemplate parsed) {
         templateText = text;
+        rootParsed = parsed;
         updatePersistedConfig(config);
         decimalPlaces = config.decimalPlaces();
         rebuildVariables(parsed);
@@ -86,26 +109,86 @@ public final class TemplateSession {
 
     public void synchronizeText(String text) {
         templateText = text;
-        rebuildVariables(TemplateParser.parse(text));
+        rootParsed = TemplateParser.parse(text);
+        rebuildVariables(rootParsed);
     }
 
     private void rebuildVariables(TemplateParser.ParsedTemplate parsed) {
-        Map<String, VariableInputState> next = new LinkedHashMap<>();
-        for (TemplateParser.VariableSpec spec : parsed.variables()) {
-            VariableInputState current = sessionVariables.get(spec.name());
+        // 某变量可能先作为文本出现，随后又在嵌套表达式中被锁定为数值；锁定会改变
+        // 是否继续解析它的文本值，因此至多再扫描一次直至结构稳定。
+        for (int pass = 0; pass < 3; pass++) {
+            Traversal traversal = new Traversal();
+            for (TemplateParser.VariableSpec spec : parsed.variables()) {
+                traverse(spec, List.of(), new ArrayList<>(), traversal);
+            }
+            sessionVariables.putAll(traversal.states);
+            variables = traversal.states;
+            List<VariableView> views = new ArrayList<>();
+            traversal.states.keySet().forEach(name -> views.add(new VariableView(name,
+                    traversal.ancestors.getOrDefault(name, List.of()),
+                    traversal.parentsWithChildren.contains(name))));
+            variableViews = List.copyOf(views);
+            dependencyErrors = Map.copyOf(traversal.errors);
+            if (!traversal.lockUpgraded) break;
+        }
+    }
+
+    private void traverse(TemplateParser.VariableSpec spec, List<String> ancestors,
+                          List<String> stack, Traversal traversal) {
+        String name = spec.name();
+        int cycleAt = stack.indexOf(name);
+        if (cycleAt >= 0) {
+            List<String> cycle = new ArrayList<>(stack.subList(cycleAt, stack.size()));
+            cycle.add(name);
+            String message = "循环引用：" + String.join(" → ", cycle);
+            for (String item : cycle) traversal.errors.put(item, message);
+            return;
+        }
+        VariableInputState state = traversal.states.get(name);
+        if (state == null) {
+            VariableInputState current = sessionVariables.get(name);
             if (current != null) {
-                next.put(spec.name(), current.copyFor(spec));
+                state = current.copyFor(spec);
             } else {
-                TemplateConfig.Entry saved = persistedConfig.variables().get(spec.name());
+                TemplateConfig.Entry saved = persistedConfig.variables().get(name);
                 VariableType type = saved == null || saved.type() == null ? spec.defaultType() : saved.type();
                 if (spec.numericLocked()) type = VariableType.NUMBER;
-                next.put(spec.name(), new VariableInputState(spec.name(), type,
-                        saved == null ? "" : saved.value(),
-                        saved == null ? Map.of() : saved.legacySessionValues(), spec.numericLocked()));
+                state = new VariableInputState(name, type, saved == null ? "" : saved.value(),
+                        saved == null ? Map.of() : saved.legacySessionValues(), spec.numericLocked());
             }
+            traversal.states.put(name, state);
+            traversal.ancestors.put(name, ancestors);
+        } else if (spec.numericLocked() && !state.numericLocked()) {
+            state = state.copyFor(new TemplateParser.VariableSpec(name, true));
+            traversal.states.put(name, state);
+            traversal.lockUpgraded = true;
         }
-        sessionVariables.putAll(next);
-        variables = next;
+        if (!traversal.explored.add(name)) return;
+        if (state.type() == VariableType.NUMBER) return;
+        if (ancestors.size() >= MAX_NESTING_DEPTH) {
+            traversal.errors.put(name, "变量嵌套超过 " + MAX_NESTING_DEPTH + " 层：" + name);
+            return;
+        }
+        TemplateParser.ParsedTemplate nested = TemplateParser.parse(state.value());
+        if (nested.variables().isEmpty()) return;
+        stack.add(name);
+        List<String> childAncestors = new ArrayList<>(ancestors);
+        childAncestors.add(name);
+        int beforeChildren = traversal.states.size();
+        for (TemplateParser.VariableSpec child : nested.variables()) {
+            traverse(child, childAncestors, stack, traversal);
+        }
+        if (traversal.states.size() > beforeChildren) traversal.parentsWithChildren.add(name);
+        stack.remove(stack.size() - 1);
+    }
+
+    private static final class Traversal {
+        final Map<String, VariableInputState> states = new LinkedHashMap<>();
+        final Map<String, List<String>> ancestors = new LinkedHashMap<>();
+        final Set<String> parentsWithChildren = new LinkedHashSet<>();
+        final Set<String> explored = new LinkedHashSet<>();
+        final Map<String, String> errors = new LinkedHashMap<>();
+        boolean lockUpgraded;
     }
 
     /** 返回独立快照，调用方不能绕过更新入口修改会话。 */
@@ -121,8 +204,13 @@ public final class TemplateSession {
 
     /** 手工编辑允许暂时无效的输入，生成时再校验，保持原有输入体验。 */
     public void setValue(String name, String value) {
-        requireVariable(name).setValue(value);
-        changed(Change.VALUE);
+        List<VariableView> before = variableViews;
+        Map<String, String> errorsBefore = dependencyErrors;
+        VariableInputState state = requireVariable(name);
+        state.setValue(value);
+        if (state.type() != VariableType.NUMBER) rebuildVariables(rootParsed);
+        changed(before.equals(variableViews) && errorsBefore.equals(dependencyErrors)
+                ? Change.VALUE : Change.STRUCTURE);
     }
 
     /** 界面负责询问类型转换方式；会话负责草稿和表达式类型锁定。 */
@@ -131,7 +219,8 @@ public final class TemplateSession {
         Objects.requireNonNull(type);
         if (state.type() == type || (state.numericLocked() && type != VariableType.NUMBER)) return;
         state.activateType(type, initialDraft);
-        changed(Change.TYPE);
+        rebuildVariables(rootParsed);
+        changed(Change.STRUCTURE);
     }
 
     /** 只清理非当前类型草稿，不影响当前生成结果或磁盘配置。 */
@@ -179,6 +268,7 @@ public final class TemplateSession {
             });
         }
         updates.forEach((name, value) -> variables.get(name).setValue(value));
+        rebuildVariables(rootParsed);
         changed(Change.BATCH);
     }
 
@@ -195,7 +285,7 @@ public final class TemplateSession {
             applied = true;
         }
         undo.clear();
-        if (applied) changed(Change.BATCH);
+        if (applied) { rebuildVariables(rootParsed); changed(Change.BATCH); }
         return Collections.unmodifiableSet(conflicts);
     }
 

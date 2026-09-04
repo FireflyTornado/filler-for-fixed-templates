@@ -3,6 +3,7 @@ package com.firefly.ui;
 import com.firefly.TemplateConstants;
 import com.firefly.core.ExpressionEvaluator;
 import com.firefly.core.TemplateParser;
+import com.firefly.core.TemplateSyntax;
 import com.firefly.core.VariableInputState;
 
 import javax.swing.*;
@@ -16,7 +17,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
-import java.util.regex.Matcher;
 
 /** 可复用、非模态的模板语法与当前变量帮助窗口。 */
 public final class TemplateHelpDialog extends JDialog {
@@ -84,13 +84,12 @@ public final class TemplateHelpDialog extends JDialog {
         String template = templateSupplier.get();
         TemplateParser.ParsedTemplate parsed = TemplateParser.parse(template);
         Map<String, VariableInputState> states = statesSupplier.get();
-        Map<String, Integer> counts = occurrenceCounts(template);
+        Map<String, Integer> counts = occurrenceCounts(template, states);
         currentModel.setRowCount(0);
-        for (TemplateParser.VariableSpec spec : parsed.variables()) {
-            VariableInputState state = states.get(spec.name());
-            currentModel.addRow(new Object[]{spec.name(), state == null ? spec.defaultType() : state.type(),
-                    "{{ }}", spec.numericLocked() ? "是" : "否", spec.numericLocked() ? "数值" : "—",
-                    counts.getOrDefault(spec.name(), 0)});
+        for (VariableInputState state : states.values()) {
+            currentModel.addRow(new Object[]{state.name(), state.type(),
+                    "{{ }}", state.numericLocked() ? "是" : "否", state.numericLocked() ? "数值" : "—",
+                    counts.getOrDefault(state.name(), 0)});
         }
         for (String auto : parsed.autoVariables()) {
             boolean numeric = TemplateConstants.AUTO_NUMERIC_VAR_SET.contains(auto);
@@ -98,9 +97,9 @@ public final class TemplateHelpDialog extends JDialog {
                     numeric ? "可参与" : "不可参与", "自动",
                     counts.getOrDefault(auto, 0)});
         }
-        Matcher matcher = TemplateConstants.PLACEHOLDER_RE.matcher(template);
-        while (matcher.find()) {
-            String content = matcher.group(1).trim();
+        for (TemplateSyntax.Placeholder placeholder : TemplateSyntax.placeholders(template)) {
+            if (placeholder.escaped()) continue;
+            String content = placeholder.content();
             if (!TemplateParser.isExpression(content)) continue;
             String expression = content.substring(1).trim();
             List<String> dependencies;
@@ -151,10 +150,12 @@ public final class TemplateHelpDialog extends JDialog {
         return "模板变量语法\n\n"
                 + "{{变量}}    推荐的普通变量格式，类型在主界面右侧选择。示例：{{天气}}\n\n"
                 + "{{=表达式}} 数值表达式。示例：{{=数量*单价}}\n\n"
+                + "\\{{变量}}   转义后的纯文本，最终输出 {{变量}}，不会创建或引用变量。\n\n"
                 + "[变量名]    表达式内的显式变量引用；纯数字或特殊名称必须使用。示例：{{=[1]*[2]}}\n\n"
                 + "• 数值变量留空按 0 处理。\n"
                 + "• 短字符串原样替换。\n"
                 + "• 多行文本保留换行。\n"
+                + "• 短字符串和多行文本可以继续包含变量，并通过箭头展开下级变量。\n"
                 + "• 表达式引用的变量会锁定为数值。\n"
                 + "• {{上月天数}}、{{本月天数}}、{{下月天数}} 是自动数值变量，无需填写且可以参与运算。\n"
                 + "• 在变量值输入框按 Tab 可跳到下一变量值。\n"
@@ -231,14 +232,22 @@ public final class TemplateHelpDialog extends JDialog {
         return "由基准日期自动计算";
     }
 
-    private static Map<String, Integer> occurrenceCounts(String template) {
+    private static Map<String, Integer> occurrenceCounts(String template,
+                                                         Map<String, VariableInputState> states) {
         Map<String, Integer> counts = new LinkedHashMap<>();
-        Matcher matcher = TemplateConstants.PLACEHOLDER_RE.matcher(template);
-        while (matcher.find()) {
-            String content = matcher.group(1).trim();
+        countOccurrences(template, counts);
+        for (VariableInputState state : states.values()) {
+            if (state.type() != com.firefly.core.VariableType.NUMBER) countOccurrences(state.value(), counts);
+        }
+        return counts;
+    }
+
+    private static void countOccurrences(String template, Map<String, Integer> counts) {
+        for (TemplateSyntax.Placeholder placeholder : TemplateSyntax.placeholders(template)) {
+            if (placeholder.escaped()) continue;
+            String content = placeholder.content();
             if (content.isEmpty() || TemplateParser.isExpression(content)) continue;
             counts.merge(content, 1, Integer::sum);
         }
-        return counts;
     }
 }

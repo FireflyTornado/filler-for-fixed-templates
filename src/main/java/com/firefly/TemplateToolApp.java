@@ -333,7 +333,11 @@ public final class TemplateToolApp extends JFrame {
             public void changedUpdate(DocumentEvent e) { templateEdited(); }
         });
         session.setChangeListener(change -> {
-            if (change == TemplateSession.Change.BATCH) variablePanel.refreshValues();
+            if (change == TemplateSession.Change.BATCH) refreshVariablePanel();
+            if (change == TemplateSession.Change.STRUCTURE) {
+                // 文本框的 DocumentListener 回调中不能同步拆建控件，延后一轮并保留焦点。
+                SwingUtilities.invokeLater(this::refreshVariablePanel);
+            }
             if (change == TemplateSession.Change.DECIMAL_PLACES) {
                 variablePanel.setDecimalPlaces(session.decimalPlaces());
             }
@@ -341,6 +345,10 @@ public final class TemplateToolApp extends JFrame {
                     ? "小数位数已改为 " + session.decimalPlaces() + " 位，请重新生成。"
                     : "内容已修改，请重新生成。");
             templateConfigSaveTimer.restart();
+            if (!session.templateName().isEmpty()) {
+                checkedTemplateVariables.put(session.templateName(),
+                        Set.copyOf(session.variables().keySet()));
+            }
             if (extractionPanel != null) extractionPanel.variablesChanged();
             if (change != TemplateSession.Change.DECIMAL_PLACES && helpDialog != null) {
                 helpDialog.refreshIfVisible();
@@ -928,8 +936,7 @@ public final class TemplateToolApp extends JFrame {
     private Map<String, Set<String>> checkedVariablesIncludingCurrentText() {
         Map<String, Set<String>> checked = new LinkedHashMap<>(checkedTemplateVariables);
         if (!session.templateName().isEmpty()) {
-            checked.put(session.templateName(),
-                    activeVariableNames(TemplateParser.parse(templateText.getText())));
+            checked.put(session.templateName(), Set.copyOf(session.variables().keySet()));
         }
         return checked;
     }
@@ -963,7 +970,8 @@ public final class TemplateToolApp extends JFrame {
 
     private void rememberCheckedVariables(String templateName, TemplateParser.ParsedTemplate parsed) {
         if (templateName == null || templateName.isEmpty()) return;
-        checkedTemplateVariables.put(templateName, activeVariableNames(parsed));
+        checkedTemplateVariables.put(templateName, templateName.equals(session.templateName())
+                ? Set.copyOf(session.variables().keySet()) : activeVariableNames(parsed));
     }
 
     private static Set<String> activeVariableNames(TemplateParser.ParsedTemplate parsed) {
@@ -1050,8 +1058,8 @@ public final class TemplateToolApp extends JFrame {
         if (Objects.equals(activeGenerationId, request.sequence())) activeGenerationId = null;
         if (generated.renderResult().hasError()) {
             deleteQuietly(generated.docxFile());
-            showWarning(generated.renderResult().error(), "表达式计算失败");
-            setStatus("表达式计算失败，未生成结果。以前的有效结果未被替换。");
+            showWarning(generated.renderResult().error(), "生成失败");
+            setStatus("生成失败，未生成结果。以前的有效结果未被替换。");
             return;
         }
         boolean stale = request.isStale(session);
@@ -1094,9 +1102,17 @@ public final class TemplateToolApp extends JFrame {
     }
 
     private Map<String, String> validatedReplacementValues() {
+        if (session.hasDependencyErrors()) {
+            variablePanel.revealVariables(session.dependencyErrorNames());
+            variablePanel.refreshAllValidation();
+            showWarning(String.join("\n", session.dependencyErrorMessages()), "变量引用错误");
+            setStatus("存在循环变量引用，未生成结果。");
+            return null;
+        }
         VariableValidation.Result validation = VariableValidation.validate(session.variables());
         List<String> problems = validation.invalidNames();
         if (!problems.isEmpty()) {
+            variablePanel.revealVariables(problems);
             variablePanel.refreshAllValidation();
             showWarning("以下数值变量格式不正确：\n\n" + String.join("、", problems) + "\n\n内容已保留，请修改后重新生成。", "输入格式错误");
             setStatus("存在无效数值，未生成结果。"); return null;
