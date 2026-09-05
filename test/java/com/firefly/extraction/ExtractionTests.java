@@ -98,8 +98,8 @@ public final class ExtractionTests {
         var quantity = ENGINE.bind("数量", sheet, MappingProfile.Mode.TITLES, 0, 0, 1, 1, MappingProfile.EmptyPolicy.KEEP);
         var amount = ENGINE.bind("金额", sheet, MappingProfile.Mode.TITLES, 0, 0, 1, 3, MappingProfile.EmptyPolicy.KEEP);
         MappingProfile rules = MappingProfile.EMPTY.put(quantity).put(amount);
-        rules = rules.withSheetSetting(new MappingProfile.SheetSettings("8月统计", 0, 0, 2, 1))
-                .withSheetSetting(new MappingProfile.SheetSettings("9月统计", 2, 1, 4, 0));
+        rules = rules.withSheetSetting(sheetSettings(sheet, 0, 0, 2, 1))
+                .withSheetSetting(sheetSettings(b.sheets().get(0), 2, 1, 4, 0));
         List<MappingEngine.Preview> result = ENGINE.preview(b, rules, session.variables(), "9月统计", 3, 1, Set.of(), CHECKPOINT);
         var q = find(result, "数量"); check(q.error().isEmpty(), "renamed workbook/sheet and reordered columns reused");
         equal("3", q.value(), "row title selects correct record after layout change");
@@ -114,8 +114,8 @@ public final class ExtractionTests {
         check(whileViewingOtherSheet.source().startsWith("8月统计 /"), "saved mapping continues to report its own source worksheet");
         var septemberAmount = ENGINE.bind("金额", b.sheets().get(0), MappingProfile.Mode.TITLES, 2, 1, 3, 0, MappingProfile.EmptyPolicy.KEEP);
         MappingProfile multiRules = MappingProfile.EMPTY.put(quantity).put(septemberAmount)
-                .withSheetSetting(new MappingProfile.SheetSettings("8月统计", 0, 0, 2, 1))
-                .withSheetSetting(new MappingProfile.SheetSettings("9月统计", 2, 1, 4, 0));
+                .withSheetSetting(sheetSettings(sheet, 0, 0, 2, 1))
+                .withSheetSetting(sheetSettings(b.sheets().get(0), 2, 1, 4, 0));
         SpreadsheetData multiBook = new SpreadsheetData(a.path(), a.modified(), a.size(), List.of(a.sheets().get(0), b.sheets().get(0)));
         for (String viewed : List.of("8月统计", "9月统计")) {
             var multi = ENGINE.preview(multiBook, multiRules, session.variables(), viewed, 1, 1, Set.of(), CHECKPOINT);
@@ -124,6 +124,19 @@ public final class ExtractionTests {
             check(find(multi, "数量").source().startsWith("8月统计 /") && find(multi, "金额").source().startsWith("9月统计 /"),
                     "batch preview preserves both source worksheets while viewing " + viewed);
         }
+        var localMoved = find(ENGINE.preview(b, MappingProfile.EMPTY.put(localAmountForMove(sheet))
+                        .withSheetSetting(sheetSettings(sheet, 0, 0, 2, 1)), session.variables(), "9月统计", 4, 0, Set.of(), CHECKPOINT), "金额");
+        equal("7.035", localMoved.value(), "local selected row follows the matched table's vertical shift");
+        var globalMovedRule = MappingProfile.EMPTY.put(ENGINE.bind("数量", sheet, MappingProfile.Mode.RECORD, 0, 0, 1, 1, MappingProfile.EmptyPolicy.KEEP))
+                .withSheetSetting(sheetSettings(sheet, 0, 0, 2, 1));
+        equal("8", find(ENGINE.preview(b, globalMovedRule, session.variables(), "9月统计", 0, 0, Set.of(), CHECKPOINT), "数量").value(),
+                "global selected row follows the matched table's vertical shift");
+        SpreadsheetData.Sheet movedSheet = b.sheets().get(0);
+        SpreadsheetData ambiguous = new SpreadsheetData(b.path(), b.modified(), b.size(), List.of(
+                new SpreadsheetData.Sheet("候选一", movedSheet.rows(), movedSheet.columns(), movedSheet.cells(), movedSheet.merges()),
+                new SpreadsheetData.Sheet("候选二", movedSheet.rows(), movedSheet.columns(), movedSheet.cells(), movedSheet.merges())));
+        check(!find(ENGINE.preview(ambiguous, globalMovedRule, session.variables(), "候选一", 0, 0, Set.of(), CHECKPOINT), "数量").error().isEmpty(),
+                "multiple worksheets with the same saved structure are reported as ambiguous");
         var record = ENGINE.bind("数量", sheet, MappingProfile.Mode.RECORD, 0, 0, 1, 1, MappingProfile.EmptyPolicy.KEEP);
         result = ENGINE.preview(a, MappingProfile.EMPTY.put(record), session.variables(), sheet.name(), 2, 1, Set.of(), CHECKPOINT);
         equal("8", find(result, "数量").value(), "record selector changes data without rebinding");
@@ -169,6 +182,15 @@ public final class ExtractionTests {
         cells.put(SpreadsheetData.key(0, 5), new SpreadsheetData.Cell("数量", null, false, false, ""));
         SpreadsheetData repeated = new SpreadsheetData(a.path(), a.modified(), a.size(), List.of(new SpreadsheetData.Sheet(sheet.name(), sheet.rows(), 6, cells, List.of())));
         check(!find(ENGINE.preview(repeated, rules, session.variables(), sheet.name(), 1, 1, Set.of(), CHECKPOINT), "数量").error().isEmpty(), "duplicate column title is not guessed");
+    }
+    private static MappingProfile.Binding localAmountForMove(SpreadsheetData.Sheet sheet) {
+        return ENGINE.bind("金额", sheet, MappingProfile.Mode.RECORD, 0, 0, 1, 3,
+                MappingProfile.EmptyPolicy.KEEP, MappingProfile.SelectionScope.LOCAL);
+    }
+    private static MappingProfile.SheetSettings sheetSettings(SpreadsheetData.Sheet sheet, int headerRow, int titleColumn,
+                                                               int recordRow, int recordColumn) {
+        return new MappingProfile.SheetSettings(sheet.name(), headerRow, titleColumn, recordRow, recordColumn,
+                sheet.headers(headerRow), sheet.rowTitles(titleColumn));
     }
     private static void configuration(SpreadsheetData book, Path dir) throws Exception {
         TemplateConfigStore store = new TemplateConfigStore(dir.resolve("config-test"));
@@ -487,11 +509,15 @@ public final class ExtractionTests {
                     check(table.getValueAt(table.getSelectedRow(), 2).toString().contains("全部同类映射：C 列"), "mapping row shows global selected column");
                     JComboBox<?> sheetSelector = field(panel, "sheets", JComboBox.class);
                     sheetSelector.setSelectedItem("备用人员表");
-                    field(panel, "headerRow", JSpinner.class).setValue(2); field(panel, "titleColumn", JSpinner.class).setValue(2);
-                    field(panel, "globalRow", JSpinner.class).setValue(3); field(panel, "globalColumn", JSpinner.class).setValue(4);
+                    check(field(panel, "headerRow", JSpinner.class).getValue().equals(2)
+                                    && field(panel, "titleColumn", JSpinner.class).getValue().equals(2)
+                                    && field(panel, "globalRow", JSpinner.class).getValue().equals(3)
+                                    && field(panel, "globalColumn", JSpinner.class).getValue().equals(4),
+                            "renamed worksheet inherits all four positions from its matching structure");
+                    field(panel, "globalRow", JSpinner.class).setValue(4);
                     MappingProfile.SheetSettings alternate = panel.profile().sheetSetting("备用人员表");
-                    check(alternate.headerRow() == 1 && alternate.titleColumn() == 1 && alternate.recordRow() == 2 && alternate.recordColumn() == 3,
-                            "worksheet UI stores all four positions independently");
+                    check(alternate.headerRow() == 1 && alternate.titleColumn() == 1 && alternate.recordRow() == 3 && alternate.recordColumn() == 3,
+                            "adjusting an inherited position stores an independent setting for the new worksheet");
                     sheetSelector.setSelectedItem("横向人员表");
                     check(field(panel, "headerRow", JSpinner.class).getValue().equals(1)
                                     && field(panel, "titleColumn", JSpinner.class).getValue().equals(1)

@@ -342,11 +342,24 @@ public final class DataExtractionPanel extends JPanel {
         SpreadsheetData.Sheet sheet = sheet(); if (sheet == null) return;
         sourcePicked = false;
         MappingProfile.Binding remembered = profile.bindings().stream().filter(b -> b.sheet().equals(sheet.name())).findFirst().orElse(null);
-        MappingProfile.SheetSettings settings = profile.sheetSetting(sheet.name());
-        int selectedHeader = settings != null ? settings.headerRow() : remembered != null ? remembered.headerRow() : 0;
-        int selectedTitleColumn = settings != null ? settings.titleColumn() : remembered != null ? remembered.titleColumn() : 0;
-        int selectedRecordRow = settings != null ? settings.recordRow() : selectedHeader + 1;
-        int selectedRecordColumn = settings != null ? settings.recordColumn() : selectedTitleColumn + 1;
+        MappingProfile.SheetSettings settings = profile.structuralSetting(sheet.name());
+        WorksheetStructureMatcher.Match structure = settings == null ? null : WorksheetStructureMatcher.match(settings, sheet);
+        if (settings == null || WorksheetStructureMatcher.hasStructure(settings) && structure == null) {
+            List<Map.Entry<MappingProfile.SheetSettings, WorksheetStructureMatcher.Match>> matches = new ArrayList<>();
+            Set<String> logicalSheets = new LinkedHashSet<>();
+            profile.sheetSettings().forEach(candidate -> logicalSheets.add(candidate.sheet()));
+            profile.bindings().forEach(binding -> logicalSheets.add(binding.sheet()));
+            for (String logicalSheet : logicalSheets) {
+                MappingProfile.SheetSettings candidate = profile.structuralSetting(logicalSheet);
+                WorksheetStructureMatcher.Match match = WorksheetStructureMatcher.match(candidate, sheet);
+                if (match != null) matches.add(Map.entry(candidate, match));
+            }
+            if (matches.size() == 1) { settings = matches.get(0).getKey(); structure = matches.get(0).getValue(); }
+        }
+        int selectedHeader = structure != null ? structure.headerRow() : settings != null ? settings.headerRow() : remembered != null ? remembered.headerRow() : 0;
+        int selectedTitleColumn = structure != null ? structure.titleColumn() : settings != null ? settings.titleColumn() : remembered != null ? remembered.titleColumn() : 0;
+        int selectedRecordRow = structure != null ? structure.recordRow() : settings != null ? settings.recordRow() : selectedHeader + 1;
+        int selectedRecordColumn = structure != null ? structure.recordColumn() : settings != null ? settings.recordColumn() : selectedTitleColumn + 1;
         updating = true;
         try {
             headerRow.setValue(clamp(selectedHeader, sheet.rows()) + 1);
@@ -365,7 +378,7 @@ public final class DataExtractionPanel extends JPanel {
         SpreadsheetData.Sheet sheet = sheet(); if (sheet == null) return;
         globalRecordRow = value(globalRow); globalRecordColumn = value(globalColumn); sourcePicked = false;
         MappingProfile.SheetSettings next = new MappingProfile.SheetSettings(sheet.name(), value(headerRow), value(titleColumn),
-                globalRecordRow, globalRecordColumn);
+                globalRecordRow, globalRecordColumn, sheet.headers(value(headerRow)), sheet.rowTitles(value(titleColumn)));
         if (!next.equals(profile.sheetSetting(sheet.name()))) {
             profile = profile.withSheetSetting(next); dirty = true; flushMappings();
         }
@@ -439,7 +452,7 @@ public final class DataExtractionPanel extends JPanel {
         SpreadsheetData.Sheet sheet = sheet(); if (sheet == null) return;
         globalRecordRow = value(globalRow); globalRecordColumn = value(globalColumn);
         profile = profile.withSheetSetting(new MappingProfile.SheetSettings(sheet.name(), value(headerRow), value(titleColumn),
-                globalRecordRow, globalRecordColumn));
+                globalRecordRow, globalRecordColumn, sheet.headers(value(headerRow)), sheet.rowTitles(value(titleColumn))));
     }
     private MappingProfile.Binding editorBinding() {
         String variable = targetVariable;
@@ -481,13 +494,16 @@ public final class DataExtractionPanel extends JPanel {
         List<String> orphan = profile.bindings().stream().map(MappingProfile.Binding::variable).filter(name -> !active.contains(name)).toList();
         Set<String> activeSheets = workbook == null ? profile.sheetSettings().stream().map(MappingProfile.SheetSettings::sheet).collect(java.util.stream.Collectors.toSet())
                 : workbook.sheets().stream().map(SpreadsheetData.Sheet::name).collect(java.util.stream.Collectors.toSet());
-        List<String> staleSheets = profile.sheetSettings().stream().map(MappingProfile.SheetSettings::sheet).filter(name -> !activeSheets.contains(name)).toList();
+        List<String> staleSheets = profile.sheetSettings().stream().filter(setting -> !activeSheets.contains(setting.sheet())
+                        && (workbook == null || workbook.sheets().stream().noneMatch(sheet -> WorksheetStructureMatcher.match(setting, sheet) != null)))
+                .map(MappingProfile.SheetSettings::sheet).toList();
         if (orphan.isEmpty() && staleSheets.isEmpty()) { status.setText("没有失效的变量映射或工作表设置。"); return; }
         String message = (orphan.isEmpty() ? "" : "已从模板移除的变量：\n" + String.join("、", orphan) + "\n")
                 + (staleSheets.isEmpty() ? "" : "当前工作簿中不存在的工作表设置：\n" + String.join("、", staleSheets));
         if (JOptionPane.showConfirmDialog(this, "清理以下失效内容？\n" + message, "清理失效映射", JOptionPane.OK_CANCEL_OPTION) == JOptionPane.OK_OPTION) {
             for (String name : orphan) profile = profile.remove(name);
-            if (!staleSheets.isEmpty()) profile = profile.retainSheetSettings(activeSheets);
+            if (!staleSheets.isEmpty()) profile = new MappingProfile(profile.bindings(), profile.sheetSettings().stream()
+                    .filter(setting -> !staleSheets.contains(setting.sheet())).toList());
             mappingChanged();
         }
     }

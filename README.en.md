@@ -98,7 +98,7 @@ Loading, saving, generating, and exporting run as background file tasks. Cancell
 5. The table shows mode, selection scope, and a contextual source such as `客户表 / C3 / 行标题：张三 / 列标题：电话`. The explanation below uses the same actual resolved titles and shows the old and new values. Apply the current variable or all variables.
 6. Return to Template Filling to review, adjust, generate, and export.
 
-Each saved mapping continues to read its own source worksheet. Switching the worksheet shown in the editor does not redirect other mappings, so Apply All Variables can read several worksheets in one batch.
+Each saved mapping follows its logical source worksheet by title structure. A matching name is preferred only when its structure still matches; a uniquely matching renamed worksheet is accepted automatically. Stored header positions and global/local row or column selections move with the matched table. Ambiguous duplicate structures require the user to choose rather than silently reading the wrong sheet. Switching the worksheet shown in the editor does not redirect other mappings, so Apply All Variables can read several worksheets in one batch.
 
 | Positioning mode | Suitable data | Reuse behavior |
 | --- | --- | --- |

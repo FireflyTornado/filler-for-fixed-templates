@@ -35,9 +35,20 @@ public final class MappingEngine {
             String source = "原绑定位置：" + sourceText(b.sheet(), b.row(), b.column(), b.rowTitle(), b.columnTitle());
             try {
                 if (book == null) throw new IllegalArgumentException("请先打开 Excel 文件");
-                MappingProfile.SheetSettings settings = profile.sheetSetting(b.sheet());
+                MappingProfile.SheetSettings settings = profile.structuralSetting(b.sheet());
+                MappingProfile.SheetSettings savedSettings = profile.sheetSetting(b.sheet());
+                if (settings != null && savedSettings == null && b.sheet().equals(activeSheet))
+                    settings = new MappingProfile.SheetSettings(settings.sheet(), headerRow >= 0 ? headerRow : b.headerRow(),
+                            titleColumn >= 0 ? titleColumn : b.titleColumn(), recordRow, recordColumn,
+                            settings.columnHeaders(), settings.rowTitles());
                 boolean sourceSheetExists = book.sheets().stream().anyMatch(sheet -> sheet.name().equals(b.sheet()));
-                if (b.mode() == MappingProfile.Mode.FIXED) {
+                if (settings != null && WorksheetStructureMatcher.hasStructure(settings)) {
+                    try { match = resolveByStructure(book, b, settings); }
+                    catch (IllegalArgumentException structureFailure) {
+                        if (savedSettings != null && WorksheetStructureMatcher.hasStructure(savedSettings)) throw structureFailure;
+                        match = resolve(book, b, activeSheet, -1, -1, recordRow, recordColumn, confirmedFixed.contains(b), checkpoint);
+                    }
+                } else if (b.mode() == MappingProfile.Mode.FIXED) {
                     match = resolve(book, b, activeSheet, -1, -1, recordRow, recordColumn, confirmedFixed.contains(b), checkpoint);
                 } else if (settings != null) {
                     match = resolveMappedSheet(book, profile, b, settings.headerRow(), settings.titleColumn(),
@@ -208,19 +219,53 @@ public final class MappingEngine {
         return new Match(match.sheet(), match.row(), match.column(), match.rowTitle(), match.columnTitle(), note);
     }
 
+    private Match resolveByStructure(SpreadsheetData book, MappingProfile.Binding binding, MappingProfile.SheetSettings settings) {
+        List<WorksheetStructureMatcher.Match> candidates = new ArrayList<>();
+        for (SpreadsheetData.Sheet sheet : book.sheets()) {
+            WorksheetStructureMatcher.Match candidate = WorksheetStructureMatcher.match(settings, sheet);
+            if (candidate != null) candidates.add(candidate);
+        }
+        WorksheetStructureMatcher.Match selected = candidates.stream()
+                .filter(candidate -> candidate.sheet().name().equals(binding.sheet())).findFirst().orElse(null);
+        if (selected == null) {
+            if (candidates.size() != 1) throw new IllegalArgumentException(candidates.isEmpty()
+                    ? "没有工作表匹配来源“" + binding.sheet() + "”保存的标题结构"
+                    : "有多个工作表匹配来源“" + binding.sheet() + "”的标题结构，请明确指定来源");
+            selected = candidates.get(0);
+        }
+        Match match = resolveOnSheet(selected.sheet(), binding, selected.headerRow(), selected.titleColumn(),
+                selected.recordRow(), selected.recordColumn(), selected.rowShift(), selected.columnShift());
+        if (selected.sheet().name().equals(binding.sheet())) return match;
+        String note = match.note().isEmpty() ? "按标题结构匹配原工作表“" + binding.sheet() + "”"
+                : "按标题结构匹配原工作表“" + binding.sheet() + "” · " + match.note();
+        return new Match(match.sheet(), match.row(), match.column(), match.rowTitle(), match.columnTitle(), note);
+    }
+
     private Match resolveOnSheet(SpreadsheetData.Sheet sheet, MappingProfile.Binding binding,
                                  int headerRow, int titleColumn, int recordRow, int recordColumn) {
+        return resolveOnSheet(sheet, binding, headerRow, titleColumn, recordRow, recordColumn, 0, 0);
+    }
+
+    private Match resolveOnSheet(SpreadsheetData.Sheet sheet, MappingProfile.Binding binding,
+                                 int headerRow, int titleColumn, int recordRow, int recordColumn,
+                                 int rowShift, int columnShift) {
         if (headerRow >= sheet.rows() || titleColumn >= sheet.columns())
             throw new IllegalArgumentException("当前工作表的列标题所在行或行标题所在列超出范围");
         int row, column;
+        if (binding.mode() == MappingProfile.Mode.FIXED) {
+            row = binding.row() + rowShift; column = binding.column() + columnShift;
+            if (row < 0 || row >= sheet.rows() || column < 0 || column >= sheet.columns())
+                throw new IllegalArgumentException("固定位置在匹配工作表中超出范围");
+            return match(sheet, row, column, headerRow, titleColumn, moved(binding, row, column));
+        }
         if (binding.mode() == MappingProfile.Mode.COLUMN_RECORD) {
             row = uniqueRow(sheet, titleColumn, binding.rowTitle(), 0);
-            column = binding.selectionScope() == MappingProfile.SelectionScope.LOCAL ? binding.column() : recordColumn;
+            column = binding.selectionScope() == MappingProfile.SelectionScope.LOCAL ? binding.column() + columnShift : recordColumn;
             if (column <= titleColumn || column >= sheet.columns()) throw new IllegalArgumentException("当前工作表的选定列无效，请调整取值列");
         } else {
             column = uniqueColumn(sheet, headerRow, binding.columnTitle());
             if (binding.mode() == MappingProfile.Mode.RECORD) {
-                row = binding.selectionScope() == MappingProfile.SelectionScope.LOCAL ? binding.row() : recordRow;
+                row = binding.selectionScope() == MappingProfile.SelectionScope.LOCAL ? binding.row() + rowShift : recordRow;
                 if (row <= headerRow || row >= sheet.rows()) throw new IllegalArgumentException("当前工作表的选定行无效，请调整取值行");
             } else {
                 row = uniqueRow(sheet, titleColumn, binding.rowTitle(), headerRow + 1);

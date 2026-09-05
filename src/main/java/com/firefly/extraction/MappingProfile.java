@@ -25,8 +25,14 @@ public record MappingProfile(List<Binding> bindings, List<SheetSettings> sheetSe
         SelectionScope(String label) { this.label = label; }
         public String toString() { return label; }
     }
-    /** 每张工作表独立的结构位置和两种全局取值位置；坐标均为 0 起始。 */
-    public record SheetSettings(String sheet, int headerRow, int titleColumn, int recordRow, int recordColumn) { }
+    /** 每张逻辑工作表的结构骨架、标题位置和两种全局取值位置；坐标均为 0 起始。 */
+    public record SheetSettings(String sheet, int headerRow, int titleColumn, int recordRow, int recordColumn,
+                                List<String> columnHeaders, List<String> rowTitles) {
+        public SheetSettings(String sheet, int headerRow, int titleColumn, int recordRow, int recordColumn) {
+            this(sheet, headerRow, titleColumn, recordRow, recordColumn, List.of(), List.of());
+        }
+        public SheetSettings { columnHeaders = structureSample(columnHeaders); rowTitles = structureSample(rowTitles); }
+    }
     public record Binding(String variable, String sheet, Mode mode, int headerRow, int titleColumn,
                           int row, int column, String rowTitle, String columnTitle,
                           List<String> headers, String fixedRowTitle, EmptyPolicy emptyPolicy, SelectionScope selectionScope) {
@@ -45,6 +51,24 @@ public record MappingProfile(List<Binding> bindings, List<SheetSettings> sheetSe
     public MappingProfile remove(String variable) { return new MappingProfile(bindings.stream().filter(b -> !b.variable().equals(variable)).toList(), sheetSettings); }
     public Binding get(String variable) { return bindings.stream().filter(b -> b.variable().equals(variable)).findFirst().orElse(null); }
     public SheetSettings sheetSetting(String sheet) { return sheetSettings.stream().filter(s -> s.sheet().equals(sheet)).findFirst().orElse(null); }
+    /** 为版本 5 及更早配置从绑定已有的标题上下文补出运行时结构骨架。 */
+    public SheetSettings structuralSetting(String sheet) {
+        SheetSettings saved = sheetSetting(sheet);
+        List<Binding> related = bindings.stream().filter(binding -> binding.sheet().equals(sheet)).toList();
+        if (saved == null && related.isEmpty()) return null;
+        Binding first = related.isEmpty() ? null : related.get(0);
+        int headerRow = saved != null ? saved.headerRow() : first.headerRow();
+        int titleColumn = saved != null ? saved.titleColumn() : first.titleColumn();
+        int recordRow = saved != null ? saved.recordRow() : first.row();
+        int recordColumn = saved != null ? saved.recordColumn() : first.column();
+        List<String> columns = saved == null ? List.of() : saved.columnHeaders();
+        List<String> rows = saved == null ? List.of() : saved.rowTitles();
+        if (columns.isEmpty()) columns = related.stream().filter(binding -> binding.mode() != Mode.COLUMN_RECORD)
+                .map(Binding::headers).max(Comparator.comparingInt(List::size)).orElse(List.of());
+        if (rows.isEmpty()) rows = related.stream().filter(binding -> binding.mode() == Mode.COLUMN_RECORD)
+                .map(Binding::headers).max(Comparator.comparingInt(List::size)).orElse(List.of());
+        return new SheetSettings(sheet, headerRow, titleColumn, recordRow, recordColumn, columns, rows);
+    }
     public MappingProfile withSheetSetting(SheetSettings setting) {
         List<SheetSettings> next = new ArrayList<>(sheetSettings);
         next.removeIf(old -> old.sheet().equals(setting.sheet())); next.add(setting);
@@ -66,8 +90,9 @@ public record MappingProfile(List<Binding> bindings, List<SheetSettings> sheetSe
         }
         List<Map<String, Object>> sheets = new ArrayList<>();
         for (SheetSettings s : sheetSettings) sheets.add(Map.of("sheet", s.sheet(), "headerRow", s.headerRow(),
-                "titleColumn", s.titleColumn(), "recordRow", s.recordRow(), "recordColumn", s.recordColumn()));
-        return Map.of("version", 5, "bindings", items, "sheets", sheets);
+                "titleColumn", s.titleColumn(), "recordRow", s.recordRow(), "recordColumn", s.recordColumn(),
+                "columnHeaders", s.columnHeaders(), "rowTitles", s.rowTitles()));
+        return Map.of("version", 6, "bindings", items, "sheets", sheets);
     }
     public static MappingProfile fromJson(Object value) {
         if (!(value instanceof Map<?, ?> root) || !(root.get("bindings") instanceof List<?> items)) return EMPTY;
@@ -89,8 +114,10 @@ public record MappingProfile(List<Binding> bindings, List<SheetSettings> sheetSe
             if (!(item instanceof Map<?, ?> m)) continue;
             try {
                 String sheet = string(m, "sheet");
+                List<String> columnHeaders = strings(m.get("columnHeaders"));
+                List<String> rowTitles = strings(m.get("rowTitles"));
                 if (!sheet.isBlank() && sheetNames.add(sheet)) sheets.add(new SheetSettings(sheet, number(m, "headerRow"),
-                        number(m, "titleColumn"), number(m, "recordRow"), number(m, "recordColumn")));
+                        number(m, "titleColumn"), number(m, "recordRow"), number(m, "recordColumn"), columnHeaders, rowTitles));
             } catch (IllegalArgumentException ignored) { /* 一张工作表的设置损坏不影响其他设置。 */ }
         }
         return new MappingProfile(bindings, sheets);
@@ -106,6 +133,19 @@ public record MappingProfile(List<Binding> bindings, List<SheetSettings> sheetSe
         };
     }
     private static String string(Map<?, ?> m, String key) { return m.get(key) instanceof String s ? s : ""; }
+    private static List<String> strings(Object value) {
+        return value instanceof List<?> list ? list.stream().map(item -> item == null ? "" : item.toString()).toList() : List.of();
+    }
+    /** 保留最多 32 个非空结构锚点及其中间位置，避免大型工作表令配置膨胀。 */
+    private static List<String> structureSample(List<String> values) {
+        List<String> result = new ArrayList<>(); int anchors = 0;
+        for (String raw : values) {
+            String value = SpreadsheetData.normalize(raw); result.add(value);
+            if (!value.isBlank() && ++anchors >= 32) break;
+        }
+        while (!result.isEmpty() && result.get(result.size() - 1).isBlank()) result.remove(result.size() - 1);
+        return List.copyOf(result);
+    }
     private static int number(Map<?, ?> m, String key) {
         if (!(m.get(key) instanceof Number n) || n.intValue() < 0 || n.intValue() > 1_048_575) throw new IllegalArgumentException(key);
         return n.intValue();
