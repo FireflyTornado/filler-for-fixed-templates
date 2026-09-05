@@ -105,8 +105,8 @@ public final class ExtractionTests {
         equal("3", q.value(), "row title selects correct record after layout change");
         check(q.source().contains("D4"), "new address shown");
         check(quantity.rowTitle().equals("华东") && quantity.columnTitle().equals("数量"), "title mapping stores both title texts when it is created");
-        check(rules.sheetSetting("8月统计").recordRow() == 2 && rules.sheetSetting("9月统计").headerRow() == 2,
-                "each worksheet keeps independent structure and global record positions");
+        check(rules.sheetSetting("8月统计").headerRow() == 0 && rules.sheetSetting("9月统计").headerRow() == 2,
+                "each worksheet keeps independent structural positions");
         check(find(result, "金额").formula(), "mapped cached formula identified");
         check(!find(result, "备注").apply(), "manual variable excluded");
         var whileViewingOtherSheet = find(ENGINE.preview(a, rules, session.variables(), "类型与公式", 0, 0, Set.of(), CHECKPOINT), "数量");
@@ -129,8 +129,9 @@ public final class ExtractionTests {
         equal("7.035", localMoved.value(), "local selected row follows the matched table's vertical shift");
         var globalMovedRule = MappingProfile.EMPTY.put(ENGINE.bind("数量", sheet, MappingProfile.Mode.RECORD, 0, 0, 1, 1, MappingProfile.EmptyPolicy.KEEP))
                 .withSheetSetting(sheetSettings(sheet, 0, 0, 2, 1));
-        equal("8", find(ENGINE.preview(b, globalMovedRule, session.variables(), "9月统计", 0, 0, Set.of(), CHECKPOINT), "数量").value(),
-                "global selected row follows the matched table's vertical shift");
+        equal("8", find(ENGINE.preview(b, globalMovedRule, session.variables(), "9月统计", 2, 1,
+                        Map.of("9月统计", new MappingEngine.RecordSelection(4, 0)), Set.of(), CHECKPOINT), "数量").value(),
+                "global selected row comes from the currently opened worksheet");
         SpreadsheetData.Sheet movedSheet = b.sheets().get(0);
         SpreadsheetData ambiguous = new SpreadsheetData(b.path(), b.modified(), b.size(), List.of(
                 new SpreadsheetData.Sheet("候选一", movedSheet.rows(), movedSheet.columns(), movedSheet.cells(), movedSheet.merges()),
@@ -162,6 +163,9 @@ public final class ExtractionTests {
         MappingProfile roundTrip = MappingProfile.fromJson(rules.toJson());
         check(roundTrip.equals(rules), "mapping profile round trips");
         check(roundTrip.sheetSettings().size() == 2, "worksheet settings round trip with mappings");
+        String mappingJson = JsonData.stringify(rules.toJson());
+        check(!mappingJson.contains("recordRow") && !mappingJson.contains("recordColumn"),
+                "runtime global positions are not persisted in mapping configuration");
         Map<String, Object> legacyRoot = new LinkedHashMap<>((Map<String, Object>) rules.toJson());
         List<Map<String, Object>> legacyBindings = new ArrayList<>();
         for (Object raw : (List<?>) legacyRoot.get("bindings")) {
@@ -189,7 +193,7 @@ public final class ExtractionTests {
     }
     private static MappingProfile.SheetSettings sheetSettings(SpreadsheetData.Sheet sheet, int headerRow, int titleColumn,
                                                                int recordRow, int recordColumn) {
-        return new MappingProfile.SheetSettings(sheet.name(), headerRow, titleColumn, recordRow, recordColumn,
+        return new MappingProfile.SheetSettings(sheet.name(), headerRow, titleColumn,
                 sheet.headers(headerRow), sheet.rowTitles(titleColumn));
     }
     private static void configuration(SpreadsheetData book, Path dir) throws Exception {
@@ -264,7 +268,7 @@ public final class ExtractionTests {
         var first = ENGINE.preview(horizontal, rules, session.variables(), sheet.name(), 1, 1, Set.of(), CHECKPOINT);
         equal("3", find(first, "数量").value(), "locked row reads first selected column");
         equal("华东", find(first, "客户").value(), "locked row can include first worksheet row");
-        var configured = rules.withSheetSetting(new MappingProfile.SheetSettings(sheet.name(), 0, 0, 1, 1));
+        var configured = rules.withSheetSetting(new MappingProfile.SheetSettings(sheet.name(), 0, 0));
         equal("华东", find(ENGINE.preview(horizontal, configured, session.variables(), sheet.name(), 1, 1, Set.of(), CHECKPOINT), "客户").value(),
                 "worksheet-specific title-column lookup supports a locked row on the header row");
         var second = ENGINE.preview(horizontal, rules, session.variables(), sheet.name(), 4, 2, Set.of(), CHECKPOINT);
@@ -506,23 +510,26 @@ public final class ExtractionTests {
                     JTable table = field(panel, "mappings", JTable.class);
                     check(table.getColumnName(1).equals("定位方式") && table.getColumnName(2).equals("选定范围"), "mapping table displays mode and selection scope columns");
                     check(table.getValueAt(table.getSelectedRow(), 1).toString().contains("锁定行"), "mapping row shows current positioning mode");
-                    check(table.getValueAt(table.getSelectedRow(), 2).toString().contains("全部同类映射：C 列"), "mapping row shows global selected column");
+                    check(table.getValueAt(table.getSelectedRow(), 2).toString().contains("当前表统一：C 列"), "mapping row shows global selected column");
                     JComboBox<?> sheetSelector = field(panel, "sheets", JComboBox.class);
                     sheetSelector.setSelectedItem("备用人员表");
                     check(field(panel, "headerRow", JSpinner.class).getValue().equals(2)
                                     && field(panel, "titleColumn", JSpinner.class).getValue().equals(2)
                                     && field(panel, "globalRow", JSpinner.class).getValue().equals(3)
-                                    && field(panel, "globalColumn", JSpinner.class).getValue().equals(4),
-                            "renamed worksheet inherits all four positions from its matching structure");
+                                    && field(panel, "globalColumn", JSpinner.class).getValue().equals(3),
+                            "renamed worksheet inherits title positions and starts with its own default data position");
                     field(panel, "globalRow", JSpinner.class).setValue(4);
                     MappingProfile.SheetSettings alternate = panel.profile().sheetSetting("备用人员表");
-                    check(alternate.headerRow() == 1 && alternate.titleColumn() == 1 && alternate.recordRow() == 3 && alternate.recordColumn() == 3,
-                            "adjusting an inherited position stores an independent setting for the new worksheet");
+                    check(alternate == null, "adjusting a current-workbook position does not store it in the mapping profile");
                     sheetSelector.setSelectedItem("横向人员表");
                     check(field(panel, "headerRow", JSpinner.class).getValue().equals(1)
                                     && field(panel, "titleColumn", JSpinner.class).getValue().equals(1)
                                     && field(panel, "globalColumn", JSpinner.class).getValue().equals(3),
                             "switching back restores that worksheet's structure and global positions");
+                    sheetSelector.setSelectedItem("备用人员表");
+                    check(field(panel, "globalRow", JSpinner.class).getValue().equals(4),
+                            "switching sheets in one workbook restores that sheet's runtime position");
+                    sheetSelector.setSelectedItem("横向人员表");
                     field(panel, "grid", JTable.class).changeSelection(2, 1, false, false);
                     field(panel, "grid", JTable.class).changeSelection(1, 1, false, false); // 重新点击 B2，选定列仍为 C。
                 } catch (Exception e) { throw new RuntimeException(e); }
@@ -646,6 +653,15 @@ public final class ExtractionTests {
                     var panel = field(owner.get(), "extractionPanel", DataExtractionPanel.class);
                     check(panel.profile().get("备注") == null && !find(panel.previews(), "备注").apply(), "manual mode removes selected mapping");
                     check(field(panel, "apply", JButton.class).isEnabled(), "switching to manual does not leave a draft blocking other mappings");
+                    panel.installWorkbook(horizontal);
+                    Map<?, ?> retained = field(panel, "workbookSelections", Map.class);
+                    check(((MappingEngine.RecordSelection) retained.get("横向人员表")).column() == 2,
+                            "refreshing the same workbook retains runtime positions");
+                    SpreadsheetData anotherFile = new SpreadsheetData(dir.resolve("another.xlsx"), horizontal.modified(), horizontal.size(), horizontal.sheets());
+                    panel.installWorkbook(anotherFile);
+                    Map<?, ?> reset = field(panel, "workbookSelections", Map.class);
+                    check(((MappingEngine.RecordSelection) reset.get("横向人员表")).column() == 1,
+                            "opening another workbook resets runtime positions to the title-adjacent default");
                 } catch (Exception e) { throw new RuntimeException(e); }
             });
         } finally {

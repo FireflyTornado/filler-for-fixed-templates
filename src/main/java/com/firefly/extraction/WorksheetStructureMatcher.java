@@ -5,7 +5,7 @@ import java.util.*;
 /** 用标题骨架识别逻辑工作表，并计算表格整体移动后的行列位置。 */
 public final class WorksheetStructureMatcher {
     public record Match(SpreadsheetData.Sheet sheet, int headerRow, int titleColumn,
-                        int recordRow, int recordColumn, int rowShift, int columnShift) { }
+                        int rowShift, int columnShift) { }
     private record Token(int index, String value) { }
     private record Axis(int position, int shift) { }
 
@@ -22,9 +22,7 @@ public final class WorksheetStructureMatcher {
         int headerRow = header == null ? settings.headerRow() + rowShift : header.position();
         int titleColumn = titles == null ? settings.titleColumn() + columnShift : titles.position();
         if (headerRow < 0 || headerRow >= sheet.rows() || titleColumn < 0 || titleColumn >= sheet.columns()) return null;
-        int recordRow = settings.recordRow() + rowShift;
-        int recordColumn = settings.recordColumn() + columnShift;
-        return new Match(sheet, headerRow, titleColumn, recordRow, recordColumn, rowShift, columnShift);
+        return new Match(sheet, headerRow, titleColumn, rowShift, columnShift);
     }
 
     public static boolean hasStructure(MappingProfile.SheetSettings settings) {

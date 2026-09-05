@@ -25,11 +25,11 @@ public record MappingProfile(List<Binding> bindings, List<SheetSettings> sheetSe
         SelectionScope(String label) { this.label = label; }
         public String toString() { return label; }
     }
-    /** 每张逻辑工作表的结构骨架、标题位置和两种全局取值位置；坐标均为 0 起始。 */
-    public record SheetSettings(String sheet, int headerRow, int titleColumn, int recordRow, int recordColumn,
+    /** 每张逻辑工作表的结构骨架和标题位置；全局取值行列属于当前打开的工作簿，不写入映射。 */
+    public record SheetSettings(String sheet, int headerRow, int titleColumn,
                                 List<String> columnHeaders, List<String> rowTitles) {
-        public SheetSettings(String sheet, int headerRow, int titleColumn, int recordRow, int recordColumn) {
-            this(sheet, headerRow, titleColumn, recordRow, recordColumn, List.of(), List.of());
+        public SheetSettings(String sheet, int headerRow, int titleColumn) {
+            this(sheet, headerRow, titleColumn, List.of(), List.of());
         }
         public SheetSettings { columnHeaders = structureSample(columnHeaders); rowTitles = structureSample(rowTitles); }
     }
@@ -59,15 +59,13 @@ public record MappingProfile(List<Binding> bindings, List<SheetSettings> sheetSe
         Binding first = related.isEmpty() ? null : related.get(0);
         int headerRow = saved != null ? saved.headerRow() : first.headerRow();
         int titleColumn = saved != null ? saved.titleColumn() : first.titleColumn();
-        int recordRow = saved != null ? saved.recordRow() : first.row();
-        int recordColumn = saved != null ? saved.recordColumn() : first.column();
         List<String> columns = saved == null ? List.of() : saved.columnHeaders();
         List<String> rows = saved == null ? List.of() : saved.rowTitles();
         if (columns.isEmpty()) columns = related.stream().filter(binding -> binding.mode() != Mode.COLUMN_RECORD)
                 .map(Binding::headers).max(Comparator.comparingInt(List::size)).orElse(List.of());
         if (rows.isEmpty()) rows = related.stream().filter(binding -> binding.mode() == Mode.COLUMN_RECORD)
                 .map(Binding::headers).max(Comparator.comparingInt(List::size)).orElse(List.of());
-        return new SheetSettings(sheet, headerRow, titleColumn, recordRow, recordColumn, columns, rows);
+        return new SheetSettings(sheet, headerRow, titleColumn, columns, rows);
     }
     public MappingProfile withSheetSetting(SheetSettings setting) {
         List<SheetSettings> next = new ArrayList<>(sheetSettings);
@@ -90,9 +88,9 @@ public record MappingProfile(List<Binding> bindings, List<SheetSettings> sheetSe
         }
         List<Map<String, Object>> sheets = new ArrayList<>();
         for (SheetSettings s : sheetSettings) sheets.add(Map.of("sheet", s.sheet(), "headerRow", s.headerRow(),
-                "titleColumn", s.titleColumn(), "recordRow", s.recordRow(), "recordColumn", s.recordColumn(),
+                "titleColumn", s.titleColumn(),
                 "columnHeaders", s.columnHeaders(), "rowTitles", s.rowTitles()));
-        return Map.of("version", 6, "bindings", items, "sheets", sheets);
+        return Map.of("version", 7, "bindings", items, "sheets", sheets);
     }
     public static MappingProfile fromJson(Object value) {
         if (!(value instanceof Map<?, ?> root) || !(root.get("bindings") instanceof List<?> items)) return EMPTY;
@@ -117,7 +115,7 @@ public record MappingProfile(List<Binding> bindings, List<SheetSettings> sheetSe
                 List<String> columnHeaders = strings(m.get("columnHeaders"));
                 List<String> rowTitles = strings(m.get("rowTitles"));
                 if (!sheet.isBlank() && sheetNames.add(sheet)) sheets.add(new SheetSettings(sheet, number(m, "headerRow"),
-                        number(m, "titleColumn"), number(m, "recordRow"), number(m, "recordColumn"), columnHeaders, rowTitles));
+                        number(m, "titleColumn"), columnHeaders, rowTitles));
             } catch (IllegalArgumentException ignored) { /* 一张工作表的设置损坏不影响其他设置。 */ }
         }
         return new MappingProfile(bindings, sheets);

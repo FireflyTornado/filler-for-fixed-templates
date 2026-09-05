@@ -77,7 +77,7 @@ flowchart LR
 
 当前读取上限为 128 MB 文件和 30 万个已定义单元格，超限拒绝，不截断。每条映射取一个单元格；当前不实现区域聚合、多表关联、多层表头自动推断或批量生成。
 
-`MappingProfile.Binding` 保存目标变量、来源工作表提示、定位方式、0 起始坐标、创建时读取到的行标题和列标题、标题上下文、空值策略和选定范围。`MappingProfile.SheetSettings` 保存横向与纵向标题骨架、标题行、标题列、全局取值行和全局取值列。`WorksheetStructureMatcher` 用标题骨架识别逻辑工作表并计算整体移动量；名称相同且结构相符时优先，否则只接受唯一结构匹配。`SelectionScope.GLOBAL` 使用匹配工作表换算后的设置，`LOCAL` 将绑定自身的 `row` 或 `column` 按同一移动量换算。界面当前工作表只影响查看和编辑，不参与已保存映射的来源选择。
+`MappingProfile.Binding` 保存目标变量、来源工作表提示、定位方式、0 起始坐标、创建时读取到的行标题和列标题、标题上下文、空值策略和选定范围。`MappingProfile.SheetSettings` 只保存横向与纵向标题骨架、标题行和标题列。`WorksheetStructureMatcher` 用标题骨架识别逻辑工作表并计算整体移动量；名称相同且结构相符时优先，否则只接受唯一结构匹配。`SelectionScope.GLOBAL` 使用当前工作簿中按实际工作表维护的运行时取值行列，`LOCAL` 将绑定自身的 `row` 或 `column` 按结构移动量换算。界面当前工作表只影响查看和编辑，不参与已保存映射的来源选择。
 
 | 定位方式 | 匹配规则 |
 | --- | --- |
@@ -107,7 +107,7 @@ flowchart LR
 
 窗口每次使用受屏幕可用范围限制的 1440×1000 默认尺寸，不保存尺寸。`layout.extractionDividerLocation` 保存数据提取上下分隔位置；布局时根据变量表最小可用高度进行显示范围限制，但不覆盖保存的位置。
 
-模板配置通过模板完整相对路径关联。当前配置格式版本为 4，映射子格式版本为 6；版本 6 在逐工作表位置设置中增加标题结构骨架。旧配置保持可读，并在用户更新映射或工作表位置时补齐结构。旧 `RECORD` 身份不变，旧 `ERROR`、`CLEAR` 空值策略读取为 `KEEP`，缺少 `selectionScope` 时读取为 `GLOBAL`。`TemplateConfigStore.migrateLegacyMappingStates` 仍负责移除旧启用状态字段。配置模型示例：
+模板配置通过模板完整相对路径关联。当前配置格式版本为 4，映射子格式版本为 7；版本 7 不再持久化全局取值行列，只保留逐工作表的标题结构。旧配置保持可读，其中 `recordRow`、`recordColumn` 会被忽略。旧 `RECORD` 身份不变，旧 `ERROR`、`CLEAR` 空值策略读取为 `KEEP`，缺少 `selectionScope` 时读取为 `GLOBAL`。`TemplateConfigStore.migrateLegacyMappingStates` 仍负责移除旧启用状态字段。配置模型示例：
 
 ```json
 {
@@ -116,12 +116,11 @@ flowchart LR
   "decimalPlaces": 2,
   "variables": {},
   "dataExtraction": {
-    "version": 6,
+    "version": 7,
     "bindings": [],
     "sheets": [
       {
         "sheet": "客户表", "headerRow": 0, "titleColumn": 0,
-        "recordRow": 2, "recordColumn": 2,
         "columnHeaders": ["姓名", "电话"], "rowTitles": ["姓名", "张三", "李四"]
       }
     ]

@@ -5,6 +5,8 @@ import java.util.*;
 
 /** 纯映射解析：只返回预览，不修改会话。重名、歧义、缺失都不猜测。 */
 public final class MappingEngine {
+    /** 当前工作簿中一张实际工作表的全局取值行列；只在本次打开期间有效。 */
+    public record RecordSelection(int row, int column) { }
     public record Match(SpreadsheetData.Sheet sheet, int row, int column,
                         String rowTitle, String columnTitle, String note) { }
     public record Preview(String variable, String source, String display, String value, String oldValue,
@@ -22,6 +24,13 @@ public final class MappingEngine {
     public List<Preview> preview(SpreadsheetData book, MappingProfile profile,
                                 Map<String, VariableInputState> variables, String activeSheet, int headerRow, int titleColumn,
                                 int recordRow, int recordColumn, Set<MappingProfile.Binding> confirmedFixed, Runnable checkpoint) {
+        return preview(book, profile, variables, activeSheet, headerRow, titleColumn,
+                Map.of(activeSheet, new RecordSelection(recordRow, recordColumn)), confirmedFixed, checkpoint);
+    }
+
+    public List<Preview> preview(SpreadsheetData book, MappingProfile profile,
+                                Map<String, VariableInputState> variables, String activeSheet, int headerRow, int titleColumn,
+                                Map<String, RecordSelection> selections, Set<MappingProfile.Binding> confirmedFixed, Runnable checkpoint) {
         List<Preview> result = new ArrayList<>();
         for (var entry : variables.entrySet()) {
             checkpoint.run();
@@ -39,29 +48,32 @@ public final class MappingEngine {
                 MappingProfile.SheetSettings savedSettings = profile.sheetSetting(b.sheet());
                 if (settings != null && savedSettings == null && b.sheet().equals(activeSheet))
                     settings = new MappingProfile.SheetSettings(settings.sheet(), headerRow >= 0 ? headerRow : b.headerRow(),
-                            titleColumn >= 0 ? titleColumn : b.titleColumn(), recordRow, recordColumn,
+                            titleColumn >= 0 ? titleColumn : b.titleColumn(),
                             settings.columnHeaders(), settings.rowTitles());
                 boolean sourceSheetExists = book.sheets().stream().anyMatch(sheet -> sheet.name().equals(b.sheet()));
                 if (settings != null && WorksheetStructureMatcher.hasStructure(settings)) {
-                    try { match = resolveByStructure(book, b, settings); }
+                    try { match = resolveByStructure(book, b, settings, selections); }
                     catch (IllegalArgumentException structureFailure) {
                         if (savedSettings != null && WorksheetStructureMatcher.hasStructure(savedSettings)) throw structureFailure;
-                        match = resolve(book, b, activeSheet, -1, -1, recordRow, recordColumn, confirmedFixed.contains(b), checkpoint);
+                        RecordSelection selected = selection(selections, activeSheet, b.headerRow(), b.titleColumn());
+                        match = resolve(book, b, activeSheet, -1, -1, selected.row(), selected.column(), confirmedFixed.contains(b), checkpoint);
                     }
                 } else if (b.mode() == MappingProfile.Mode.FIXED) {
-                    match = resolve(book, b, activeSheet, -1, -1, recordRow, recordColumn, confirmedFixed.contains(b), checkpoint);
+                    RecordSelection selected = selection(selections, activeSheet, b.headerRow(), b.titleColumn());
+                    match = resolve(book, b, activeSheet, -1, -1, selected.row(), selected.column(), confirmedFixed.contains(b), checkpoint);
                 } else if (settings != null) {
-                    match = resolveMappedSheet(book, profile, b, settings.headerRow(), settings.titleColumn(),
-                            settings.recordRow(), settings.recordColumn());
+                    match = resolveMappedSheet(book, profile, b, settings.headerRow(), settings.titleColumn(), selections);
                 } else if (sourceSheetExists) {
-                    int mappedRow = b.selectionScope() == MappingProfile.SelectionScope.GLOBAL && b.sheet().equals(activeSheet) ? recordRow : b.row();
-                    int mappedColumn = b.selectionScope() == MappingProfile.SelectionScope.GLOBAL && b.sheet().equals(activeSheet) ? recordColumn : b.column();
+                    RecordSelection selected = selection(selections, b.sheet(), b.headerRow(), b.titleColumn());
+                    int mappedRow = b.selectionScope() == MappingProfile.SelectionScope.GLOBAL ? selected.row() : b.row();
+                    int mappedColumn = b.selectionScope() == MappingProfile.SelectionScope.GLOBAL ? selected.column() : b.column();
                     int mappedHeader = b.sheet().equals(activeSheet) && headerRow >= 0 ? headerRow : b.headerRow();
                     int mappedTitleColumn = b.sheet().equals(activeSheet) && titleColumn >= 0 ? titleColumn : b.titleColumn();
                     match = resolveMappedSheet(book, b, mappedHeader, mappedTitleColumn, mappedRow, mappedColumn);
                 } else {
                     // 旧配置可能没有逐表设置；工作表改名时沿用原有结构匹配逻辑。
-                    match = resolve(book, b, activeSheet, -1, -1, recordRow, recordColumn, confirmedFixed.contains(b), checkpoint);
+                    RecordSelection selected = selection(selections, activeSheet, b.headerRow(), b.titleColumn());
+                    match = resolve(book, b, activeSheet, -1, -1, selected.row(), selected.column(), confirmedFixed.contains(b), checkpoint);
                 }
                 cell = match.sheet().cell(match.row(), match.column());
                 source = sourceText(match.sheet().name(), match.row(), match.column(), match.rowTitle(), match.columnTitle());
@@ -197,19 +209,26 @@ public final class MappingEngine {
 
     private Match resolveMappedSheet(SpreadsheetData book, MappingProfile.Binding binding,
                                      int headerRow, int titleColumn, int recordRow, int recordColumn) {
-        return resolveMappedSheet(book, MappingProfile.EMPTY, binding, headerRow, titleColumn, recordRow, recordColumn);
+        Map<String, RecordSelection> selections = new LinkedHashMap<>();
+        for (SpreadsheetData.Sheet sheet : book.sheets()) selections.put(sheet.name(), new RecordSelection(recordRow, recordColumn));
+        return resolveMappedSheet(book, MappingProfile.EMPTY, binding, headerRow, titleColumn, selections);
     }
 
     private Match resolveMappedSheet(SpreadsheetData book, MappingProfile profile, MappingProfile.Binding binding,
-                                     int headerRow, int titleColumn, int recordRow, int recordColumn) {
+                                     int headerRow, int titleColumn, Map<String, RecordSelection> selections) {
         SpreadsheetData.Sheet named = book.sheets().stream().filter(s -> s.name().equals(binding.sheet())).findFirst().orElse(null);
-        if (named != null) return resolveOnSheet(named, binding, headerRow, titleColumn, recordRow, recordColumn);
+        if (named != null) {
+            RecordSelection selected = selection(selections, named.name(), headerRow, titleColumn);
+            return resolveOnSheet(named, binding, headerRow, titleColumn, selected.row(), selected.column());
+        }
         List<Match> candidates = new ArrayList<>();
         for (SpreadsheetData.Sheet sheet : book.sheets()) try {
             MappingProfile.SheetSettings candidate = profile.sheetSetting(sheet.name());
+            int candidateHeader = candidate == null ? headerRow : candidate.headerRow();
+            int candidateTitle = candidate == null ? titleColumn : candidate.titleColumn();
+            RecordSelection selected = selection(selections, sheet.name(), candidateHeader, candidateTitle);
             candidates.add(resolveOnSheet(sheet, binding,
-                    candidate == null ? headerRow : candidate.headerRow(), candidate == null ? titleColumn : candidate.titleColumn(),
-                    candidate == null ? recordRow : candidate.recordRow(), candidate == null ? recordColumn : candidate.recordColumn()));
+                    candidateHeader, candidateTitle, selected.row(), selected.column()));
         } catch (IllegalArgumentException ignored) { }
         if (candidates.size() != 1) throw new IllegalArgumentException(candidates.isEmpty()
                 ? "来源工作表“" + binding.sheet() + "”不存在，其他工作表也未找到匹配标题"
@@ -219,7 +238,8 @@ public final class MappingEngine {
         return new Match(match.sheet(), match.row(), match.column(), match.rowTitle(), match.columnTitle(), note);
     }
 
-    private Match resolveByStructure(SpreadsheetData book, MappingProfile.Binding binding, MappingProfile.SheetSettings settings) {
+    private Match resolveByStructure(SpreadsheetData book, MappingProfile.Binding binding, MappingProfile.SheetSettings settings,
+                                     Map<String, RecordSelection> selections) {
         List<WorksheetStructureMatcher.Match> candidates = new ArrayList<>();
         for (SpreadsheetData.Sheet sheet : book.sheets()) {
             WorksheetStructureMatcher.Match candidate = WorksheetStructureMatcher.match(settings, sheet);
@@ -233,8 +253,9 @@ public final class MappingEngine {
                     : "有多个工作表匹配来源“" + binding.sheet() + "”的标题结构，请明确指定来源");
             selected = candidates.get(0);
         }
+        RecordSelection record = selection(selections, selected.sheet().name(), selected.headerRow(), selected.titleColumn());
         Match match = resolveOnSheet(selected.sheet(), binding, selected.headerRow(), selected.titleColumn(),
-                selected.recordRow(), selected.recordColumn(), selected.rowShift(), selected.columnShift());
+                record.row(), record.column(), selected.rowShift(), selected.columnShift());
         if (selected.sheet().name().equals(binding.sheet())) return match;
         String note = match.note().isEmpty() ? "按标题结构匹配原工作表“" + binding.sheet() + "”"
                 : "按标题结构匹配原工作表“" + binding.sheet() + "” · " + match.note();
@@ -273,6 +294,11 @@ public final class MappingEngine {
             }
         }
         return match(sheet, row, column, headerRow, titleColumn, moved(binding, row, column));
+    }
+
+    private RecordSelection selection(Map<String, RecordSelection> selections, String sheet, int headerRow, int titleColumn) {
+        RecordSelection selected = selections.get(sheet);
+        return selected == null ? new RecordSelection(Math.max(0, headerRow + 1), Math.max(0, titleColumn + 1)) : selected;
     }
 
     private int uniqueColumn(SpreadsheetData.Sheet sheet, int headerRow, String title) {
