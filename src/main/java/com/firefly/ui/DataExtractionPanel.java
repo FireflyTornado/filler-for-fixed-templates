@@ -428,11 +428,18 @@ public final class DataExtractionPanel extends JPanel {
     private void bindSelected() {
         if (sheet() == null || targetVariable.isEmpty() || templateName.isBlank()) { status.setText("请先选择表格和模板变量。"); return; }
         try {
+            rememberCurrentSheetSettings();
             MappingProfile.Binding binding = editorBinding();
             profile = profile.put(binding); confirmedFixed.add(binding);
             sourcePicked = false;
             mappingChanged();
         } catch (IllegalArgumentException e) { status.setText(e.getMessage()); }
+    }
+    private void rememberCurrentSheetSettings() {
+        SpreadsheetData.Sheet sheet = sheet(); if (sheet == null) return;
+        globalRecordRow = value(globalRow); globalRecordColumn = value(globalColumn);
+        profile = profile.withSheetSetting(new MappingProfile.SheetSettings(sheet.name(), value(headerRow), value(titleColumn),
+                globalRecordRow, globalRecordColumn));
     }
     private MappingProfile.Binding editorBinding() {
         String variable = targetVariable;
@@ -552,7 +559,7 @@ public final class DataExtractionPanel extends JPanel {
                 progress -> {
                     List<MappingEngine.Preview> saved = engine.preview(source, rules, variables, activeSheet, selectedHeader, selectedTitleColumn, record, column, fixed, progress::checkpoint);
                     MappingEngine.Preview selected = null;
-                    if (editor != null) selected = engine.preview(source, MappingProfile.EMPTY.put(editor),
+                    if (editor != null) selected = engine.preview(source, new MappingProfile(List.of(editor), rules.sheetSettings()),
                             Map.of(editor.variable(), variables.get(editor.variable())), activeSheet, selectedHeader, selectedTitleColumn, record, column,
                             confirmedEditor ? Set.of(editor) : Set.of(), progress::checkpoint).get(0);
                     return new PreviewResult(saved, selected, editor, pending, editorError);
@@ -623,10 +630,13 @@ public final class DataExtractionPanel extends JPanel {
     private String selectionDescription(MappingProfile.Binding binding) {
         if (binding == null || (binding.mode() != MappingProfile.Mode.RECORD && binding.mode() != MappingProfile.Mode.COLUMN_RECORD)) return "—";
         boolean local = binding.selectionScope() == MappingProfile.SelectionScope.LOCAL;
+        MappingProfile.SheetSettings settings = profile.sheetSetting(binding.sheet());
+        int sheetRow = settings != null ? settings.recordRow() : binding.sheet().equals(sheets.getSelectedItem()) ? globalRecordRow : binding.row();
+        int sheetColumn = settings != null ? settings.recordColumn() : binding.sheet().equals(sheets.getSelectedItem()) ? globalRecordColumn : binding.column();
         String position = binding.mode() == MappingProfile.Mode.RECORD
-                ? "第 " + ((local ? binding.row() : globalRecordRow) + 1) + " 行"
-                : columnName(local ? binding.column() : globalRecordColumn) + " 列";
-        return (local ? "仅此映射：" : "全部同类映射：") + position;
+                ? "第 " + ((local ? binding.row() : sheetRow) + 1) + " 行"
+                : columnName(local ? binding.column() : sheetColumn) + " 列";
+        return (local ? "仅此映射：" : "全部同类映射：") + position + "（" + binding.sheet() + "）";
     }
     private String mappingBasis(MappingProfile.Binding binding) {
         if (binding == null) return "定位依据：手工填写";

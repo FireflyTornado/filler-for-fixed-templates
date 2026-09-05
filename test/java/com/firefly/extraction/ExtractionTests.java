@@ -109,8 +109,21 @@ public final class ExtractionTests {
                 "each worksheet keeps independent structure and global record positions");
         check(find(result, "金额").formula(), "mapped cached formula identified");
         check(!find(result, "备注").apply(), "manual variable excluded");
-        check(!find(ENGINE.preview(a, rules, session.variables(), "类型与公式", 0, 0, Set.of(), CHECKPOINT), "数量").error().isEmpty(),
-                "title mapping resolves on the currently selected worksheet instead of silently reading its original sheet");
+        var whileViewingOtherSheet = find(ENGINE.preview(a, rules, session.variables(), "类型与公式", 0, 0, Set.of(), CHECKPOINT), "数量");
+        equal("3", whileViewingOtherSheet.value(), "switching the viewed worksheet does not redirect a saved mapping");
+        check(whileViewingOtherSheet.source().startsWith("8月统计 /"), "saved mapping continues to report its own source worksheet");
+        var septemberAmount = ENGINE.bind("金额", b.sheets().get(0), MappingProfile.Mode.TITLES, 2, 1, 3, 0, MappingProfile.EmptyPolicy.KEEP);
+        MappingProfile multiRules = MappingProfile.EMPTY.put(quantity).put(septemberAmount)
+                .withSheetSetting(new MappingProfile.SheetSettings("8月统计", 0, 0, 2, 1))
+                .withSheetSetting(new MappingProfile.SheetSettings("9月统计", 2, 1, 4, 0));
+        SpreadsheetData multiBook = new SpreadsheetData(a.path(), a.modified(), a.size(), List.of(a.sheets().get(0), b.sheets().get(0)));
+        for (String viewed : List.of("8月统计", "9月统计")) {
+            var multi = ENGINE.preview(multiBook, multiRules, session.variables(), viewed, 1, 1, Set.of(), CHECKPOINT);
+            equal("3", find(multi, "数量").value(), "batch preview reads quantity from August while viewing " + viewed);
+            equal("7.035", find(multi, "金额").value(), "batch preview reads amount from September while viewing " + viewed);
+            check(find(multi, "数量").source().startsWith("8月统计 /") && find(multi, "金额").source().startsWith("9月统计 /"),
+                    "batch preview preserves both source worksheets while viewing " + viewed);
+        }
         var record = ENGINE.bind("数量", sheet, MappingProfile.Mode.RECORD, 0, 0, 1, 1, MappingProfile.EmptyPolicy.KEEP);
         result = ENGINE.preview(a, MappingProfile.EMPTY.put(record), session.variables(), sheet.name(), 2, 1, Set.of(), CHECKPOINT);
         equal("8", find(result, "数量").value(), "record selector changes data without rebinding");
@@ -240,7 +253,8 @@ public final class ExtractionTests {
         equal("8", relocated.value(), "row and title-column movement follows row title");
         check(relocated.source().contains("E4"), "horizontal relocated address shown");
         for (int col : List.of(0, 3, -1)) check(!find(ENGINE.preview(horizontal, rules, session.variables(), sheet.name(), 1, col, Set.of(), CHECKPOINT), "数量").error().isEmpty(), "invalid column is not treated as blank: " + col);
-        check(!find(ENGINE.preview(horizontal, rules, session.variables(), "wrong sheet", 1, 1, Set.of(), CHECKPOINT), "数量").error().isEmpty(), "horizontal mode requires active worksheet");
+        equal("3", find(ENGINE.preview(horizontal, rules, session.variables(), "wrong sheet", 1, 1, Set.of(), CHECKPOINT), "数量").value(),
+                "locked-row mapping is independent of the worksheet currently shown in the editor");
         check(MappingProfile.fromJson(rules.toJson()).equals(rules), "horizontal mapping round trips");
         Map<Long, SpreadsheetData.Cell> duplicated = new LinkedHashMap<>(sheet.cells());
         duplicated.put(SpreadsheetData.key(5, 0), new SpreadsheetData.Cell("数量", null, false, false, ""));
