@@ -3,9 +3,10 @@ package com.firefly.extraction;
 import java.util.*;
 
 /** 映射绑定模板变量；不保存工作簿文件名或路径。坐标均为 0 起始。 */
-public record MappingProfile(List<Binding> bindings) {
-    public static final MappingProfile EMPTY = new MappingProfile(List.of());
-    public MappingProfile { bindings = List.copyOf(bindings); }
+public record MappingProfile(List<Binding> bindings, List<SheetSettings> sheetSettings) {
+    public static final MappingProfile EMPTY = new MappingProfile(List.of(), List.of());
+    public MappingProfile(List<Binding> bindings) { this(bindings, List.of()); }
+    public MappingProfile { bindings = List.copyOf(bindings); sheetSettings = List.copyOf(sheetSettings); }
     public enum Mode {
         FIXED("固定单元格"), TITLES("按行列标题"), RECORD("锁定列／更改选定行"), COLUMN_RECORD("锁定行／更改选定列");
         private final String label;
@@ -24,6 +25,8 @@ public record MappingProfile(List<Binding> bindings) {
         SelectionScope(String label) { this.label = label; }
         public String toString() { return label; }
     }
+    /** 每张工作表独立的结构位置和两种全局取值位置；坐标均为 0 起始。 */
+    public record SheetSettings(String sheet, int headerRow, int titleColumn, int recordRow, int recordColumn) { }
     public record Binding(String variable, String sheet, Mode mode, int headerRow, int titleColumn,
                           int row, int column, String rowTitle, String columnTitle,
                           List<String> headers, String fixedRowTitle, EmptyPolicy emptyPolicy, SelectionScope selectionScope) {
@@ -37,10 +40,19 @@ public record MappingProfile(List<Binding> bindings) {
     public MappingProfile put(Binding binding) {
         List<Binding> next = new ArrayList<>(bindings);
         next.removeIf(old -> old.variable().equals(binding.variable())); next.add(binding);
-        return new MappingProfile(next);
+        return new MappingProfile(next, sheetSettings);
     }
-    public MappingProfile remove(String variable) { return new MappingProfile(bindings.stream().filter(b -> !b.variable().equals(variable)).toList()); }
+    public MappingProfile remove(String variable) { return new MappingProfile(bindings.stream().filter(b -> !b.variable().equals(variable)).toList(), sheetSettings); }
     public Binding get(String variable) { return bindings.stream().filter(b -> b.variable().equals(variable)).findFirst().orElse(null); }
+    public SheetSettings sheetSetting(String sheet) { return sheetSettings.stream().filter(s -> s.sheet().equals(sheet)).findFirst().orElse(null); }
+    public MappingProfile withSheetSetting(SheetSettings setting) {
+        List<SheetSettings> next = new ArrayList<>(sheetSettings);
+        next.removeIf(old -> old.sheet().equals(setting.sheet())); next.add(setting);
+        return new MappingProfile(bindings, next);
+    }
+    public MappingProfile retainSheetSettings(Set<String> sheets) {
+        return new MappingProfile(bindings, sheetSettings.stream().filter(setting -> sheets.contains(setting.sheet())).toList());
+    }
 
     public Map<String, Object> toJson() {
         List<Map<String, Object>> items = new ArrayList<>();
@@ -52,7 +64,10 @@ public record MappingProfile(List<Binding> bindings) {
             item.put("columnTitle", b.columnTitle()); item.put("headers", b.headers()); item.put("fixedRowTitle", b.fixedRowTitle());
             item.put("emptyPolicy", b.emptyPolicy().name()); item.put("selectionScope", b.selectionScope().name()); items.add(item);
         }
-        return Map.of("version", 4, "bindings", items);
+        List<Map<String, Object>> sheets = new ArrayList<>();
+        for (SheetSettings s : sheetSettings) sheets.add(Map.of("sheet", s.sheet(), "headerRow", s.headerRow(),
+                "titleColumn", s.titleColumn(), "recordRow", s.recordRow(), "recordColumn", s.recordColumn()));
+        return Map.of("version", 5, "bindings", items, "sheets", sheets);
     }
     public static MappingProfile fromJson(Object value) {
         if (!(value instanceof Map<?, ?> root) || !(root.get("bindings") instanceof List<?> items)) return EMPTY;
@@ -69,7 +84,16 @@ public record MappingProfile(List<Binding> bindings) {
                         readEmptyPolicy(string(m, "emptyPolicy")), readSelectionScope(string(m, "selectionScope"))));
             } catch (IllegalArgumentException ignored) { /* 一条损坏的配置不影响其他映射。 */ }
         }
-        return new MappingProfile(bindings);
+        List<SheetSettings> sheets = new ArrayList<>(); Set<String> sheetNames = new HashSet<>();
+        if (root.get("sheets") instanceof List<?> settings) for (Object item : settings) {
+            if (!(item instanceof Map<?, ?> m)) continue;
+            try {
+                String sheet = string(m, "sheet");
+                if (!sheet.isBlank() && sheetNames.add(sheet)) sheets.add(new SheetSettings(sheet, number(m, "headerRow"),
+                        number(m, "titleColumn"), number(m, "recordRow"), number(m, "recordColumn")));
+            } catch (IllegalArgumentException ignored) { /* 一张工作表的设置损坏不影响其他设置。 */ }
+        }
+        return new MappingProfile(bindings, sheets);
     }
     private static SelectionScope readSelectionScope(String value) {
         return value.isBlank() ? SelectionScope.GLOBAL : SelectionScope.valueOf(value);

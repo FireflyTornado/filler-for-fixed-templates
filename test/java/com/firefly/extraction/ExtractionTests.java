@@ -98,12 +98,19 @@ public final class ExtractionTests {
         var quantity = ENGINE.bind("数量", sheet, MappingProfile.Mode.TITLES, 0, 0, 1, 1, MappingProfile.EmptyPolicy.KEEP);
         var amount = ENGINE.bind("金额", sheet, MappingProfile.Mode.TITLES, 0, 0, 1, 3, MappingProfile.EmptyPolicy.KEEP);
         MappingProfile rules = MappingProfile.EMPTY.put(quantity).put(amount);
+        rules = rules.withSheetSetting(new MappingProfile.SheetSettings("8月统计", 0, 0, 2, 1))
+                .withSheetSetting(new MappingProfile.SheetSettings("9月统计", 2, 1, 4, 0));
         List<MappingEngine.Preview> result = ENGINE.preview(b, rules, session.variables(), "9月统计", 3, 1, Set.of(), CHECKPOINT);
         var q = find(result, "数量"); check(q.error().isEmpty(), "renamed workbook/sheet and reordered columns reused");
         equal("3", q.value(), "row title selects correct record after layout change");
         check(q.source().contains("D4"), "new address shown");
+        check(quantity.rowTitle().equals("华东") && quantity.columnTitle().equals("数量"), "title mapping stores both title texts when it is created");
+        check(rules.sheetSetting("8月统计").recordRow() == 2 && rules.sheetSetting("9月统计").headerRow() == 2,
+                "each worksheet keeps independent structure and global record positions");
         check(find(result, "金额").formula(), "mapped cached formula identified");
         check(!find(result, "备注").apply(), "manual variable excluded");
+        check(!find(ENGINE.preview(a, rules, session.variables(), "类型与公式", 0, 0, Set.of(), CHECKPOINT), "数量").error().isEmpty(),
+                "title mapping resolves on the currently selected worksheet instead of silently reading its original sheet");
         var record = ENGINE.bind("数量", sheet, MappingProfile.Mode.RECORD, 0, 0, 1, 1, MappingProfile.EmptyPolicy.KEEP);
         result = ENGINE.preview(a, MappingProfile.EMPTY.put(record), session.variables(), sheet.name(), 2, 1, Set.of(), CHECKPOINT);
         equal("8", find(result, "数量").value(), "record selector changes data without rebinding");
@@ -128,6 +135,7 @@ public final class ExtractionTests {
         check(find(ENGINE.preview(a, MappingProfile.EMPTY.put(date), session.variables(), sheet.name(), 1, 1, Set.of(date), CHECKPOINT), "数量").error().contains("日期"), "date serial never silently fills numeric variable");
         MappingProfile roundTrip = MappingProfile.fromJson(rules.toJson());
         check(roundTrip.equals(rules), "mapping profile round trips");
+        check(roundTrip.sheetSettings().size() == 2, "worksheet settings round trip with mappings");
         Map<String, Object> legacyRoot = new LinkedHashMap<>((Map<String, Object>) rules.toJson());
         List<Map<String, Object>> legacyBindings = new ArrayList<>();
         for (Object raw : (List<?>) legacyRoot.get("bindings")) {
@@ -136,6 +144,10 @@ public final class ExtractionTests {
         legacyRoot.put("bindings", legacyBindings);
         check(MappingProfile.fromJson(legacyRoot).bindings().stream().allMatch(binding -> binding.selectionScope() == MappingProfile.SelectionScope.GLOBAL),
                 "mappings saved before scope support default to global selection");
+        legacyRoot.remove("sheets");
+        check(MappingProfile.fromJson(legacyRoot).sheetSettings().isEmpty(), "mappings saved before worksheet settings remain readable");
+        check(rules.retainSheetSettings(Set.of("9月统计")).sheetSettings().stream().map(MappingProfile.SheetSettings::sheet).toList().equals(List.of("9月统计")),
+                "stale worksheet settings can be removed without changing bindings");
         check(!JsonData.stringify(rules.toJson()).contains(".xlsx"), "workbook name not bound in mapping config");
         Map<Long, SpreadsheetData.Cell> reducedCells = new LinkedHashMap<>(sheet.cells()); reducedCells.remove(SpreadsheetData.key(0, 2));
         SpreadsheetData reduced = new SpreadsheetData(a.path(), a.modified(), a.size(), List.of(new SpreadsheetData.Sheet(sheet.name(), sheet.rows(), sheet.columns(), reducedCells, List.of())));
@@ -217,6 +229,9 @@ public final class ExtractionTests {
         var first = ENGINE.preview(horizontal, rules, session.variables(), sheet.name(), 1, 1, Set.of(), CHECKPOINT);
         equal("3", find(first, "数量").value(), "locked row reads first selected column");
         equal("华东", find(first, "客户").value(), "locked row can include first worksheet row");
+        var configured = rules.withSheetSetting(new MappingProfile.SheetSettings(sheet.name(), 0, 0, 1, 1));
+        equal("华东", find(ENGINE.preview(horizontal, configured, session.variables(), sheet.name(), 1, 1, Set.of(), CHECKPOINT), "客户").value(),
+                "worksheet-specific title-column lookup supports a locked row on the header row");
         var second = ENGINE.preview(horizontal, rules, session.variables(), sheet.name(), 4, 2, Set.of(), CHECKPOINT);
         equal("8", find(second, "数量").value(), "column selector changes numeric record independently of row selector");
         equal("华东", find(second, "客户").value(), "global column selector does not change local mapping");
@@ -376,6 +391,13 @@ public final class ExtractionTests {
             sheet.getRow(0).createCell(1).setCellValue("张三"); sheet.getRow(0).createCell(2).setCellValue("李四");
             sheet.getRow(1).createCell(1).setCellValue(3); sheet.getRow(1).createCell(2).setCellValue(8);
             sheet.getRow(2).createCell(1).setCellValue(100); sheet.getRow(2).createCell(2).setCellValue(200);
+            Sheet alternate = workbook.createSheet("备用人员表");
+            alternate.createRow(1).createCell(1).setCellValue("姓名");
+            alternate.getRow(1).createCell(2).setCellValue("张三"); alternate.getRow(1).createCell(3).setCellValue("李四");
+            alternate.createRow(2).createCell(1).setCellValue("数量");
+            alternate.getRow(2).createCell(2).setCellValue(30); alternate.getRow(2).createCell(3).setCellValue(80);
+            alternate.createRow(3).createCell(1).setCellValue("金额");
+            alternate.createRow(4).createCell(1).setCellValue("备注");
             try (var output = Files.newOutputStream(horizontalFile)) { workbook.write(output); }
         }
         SpreadsheetData horizontal = read(horizontalFile);
@@ -399,7 +421,8 @@ public final class ExtractionTests {
             SwingUtilities.invokeAndWait(() -> {
                 try {
                     var panel = field(owner.get(), "extractionPanel", DataExtractionPanel.class);
-                    check(field(panel, "recordColumn", JSpinner.class).isVisible() && !field(panel, "recordRow", JSpinner.class).isVisible(), "column mode shows only column selector");
+                    check(!field(panel, "recordSelector", JPanel.class).isVisible(), "global mode uses the always-visible worksheet selector");
+                    check(field(panel, "globalColumn", JSpinner.class).isVisible() && field(panel, "globalRow", JSpinner.class).isVisible(), "both worksheet-wide selectors are always visible");
                     check(field(panel, "recordSelector", JPanel.class).getParent() == field(panel, "mode", JComboBox.class).getParent(), "record selector is adjacent to positioning mode");
                     check(field(panel, "target", JLabel.class).getText().contains("数量"), "selected variable is displayed as a label");
                     var preview = field(panel, "gridScroll", JScrollPane.class);
@@ -431,7 +454,7 @@ public final class ExtractionTests {
                     check(data.isCellSelected(1, 1) && !data.isCellSelected(1, 0) && !data.isCellSelected(1, 2), "only the row-column intersection is painted as selected");
                     check(rows.getSelectedRow() == -1, "selecting a data cell does not highlight its row header");
                     check(!columns.isCellSelected(0, 1), "column title display does not mirror the data-cell highlight");
-                    field(panel, "recordColumn", JSpinner.class).setValue(3);
+                    field(panel, "globalColumn", JSpinner.class).setValue(3);
                 } catch (Exception e) { throw new RuntimeException(e); }
             });
             awaitPreview(owner.get());
@@ -448,6 +471,18 @@ public final class ExtractionTests {
                     check(table.getColumnName(1).equals("定位方式") && table.getColumnName(2).equals("选定范围"), "mapping table displays mode and selection scope columns");
                     check(table.getValueAt(table.getSelectedRow(), 1).toString().contains("锁定行"), "mapping row shows current positioning mode");
                     check(table.getValueAt(table.getSelectedRow(), 2).toString().contains("全部同类映射：C 列"), "mapping row shows global selected column");
+                    JComboBox<?> sheetSelector = field(panel, "sheets", JComboBox.class);
+                    sheetSelector.setSelectedItem("备用人员表");
+                    field(panel, "headerRow", JSpinner.class).setValue(2); field(panel, "titleColumn", JSpinner.class).setValue(2);
+                    field(panel, "globalRow", JSpinner.class).setValue(3); field(panel, "globalColumn", JSpinner.class).setValue(4);
+                    MappingProfile.SheetSettings alternate = panel.profile().sheetSetting("备用人员表");
+                    check(alternate.headerRow() == 1 && alternate.titleColumn() == 1 && alternate.recordRow() == 2 && alternate.recordColumn() == 3,
+                            "worksheet UI stores all four positions independently");
+                    sheetSelector.setSelectedItem("横向人员表");
+                    check(field(panel, "headerRow", JSpinner.class).getValue().equals(1)
+                                    && field(panel, "titleColumn", JSpinner.class).getValue().equals(1)
+                                    && field(panel, "globalColumn", JSpinner.class).getValue().equals(3),
+                            "switching back restores that worksheet's structure and global positions");
                     field(panel, "grid", JTable.class).changeSelection(2, 1, false, false);
                     field(panel, "grid", JTable.class).changeSelection(1, 1, false, false); // 重新点击 B2，选定列仍为 C。
                 } catch (Exception e) { throw new RuntimeException(e); }
@@ -496,6 +531,9 @@ public final class ExtractionTests {
                     invoke(panel, "applyCurrentPreview", new Class<?>[]{});
                     equal("8", field(owner.get(), "session", TemplateSession.class).variable("数量").value(), "current-variable application succeeds despite another mapping error");
                     field(panel, "scope", JComboBox.class).setSelectedItem(MappingProfile.SelectionScope.LOCAL);
+                    check(field(panel, "recordColumn", JSpinner.class).isVisible() && !field(panel, "recordRow", JSpinner.class).isVisible(), "local locked-row mode shows only its own column selector");
+                    field(panel, "grid", JTable.class).changeSelection(1, 2, false, false);
+                    equal("3", field(panel, "recordColumn", JSpinner.class).getValue().toString(), "clicking a cell updates the local locked-row column selector");
                     field(panel, "recordColumn", JSpinner.class).setValue(2);
                 } catch (Exception e) { throw new RuntimeException(e); }
             });
@@ -526,8 +564,10 @@ public final class ExtractionTests {
                     check(field(panel, "selection", JTextArea.class).getText().contains("已保留原文"), "blank text keep prompt is shown below");
                     panel.applyPreview(); equal("待确认", field(app, "session", TemplateSession.class).variable("备注").value(), "blank text keep never clears text");
                     var mode = field(panel, "mode", JComboBox.class); mode.setSelectedItem(MappingProfile.Mode.RECORD);
+                    field(panel, "scope", JComboBox.class).setSelectedItem(MappingProfile.SelectionScope.LOCAL);
                     check(field(panel, "recordRow", JSpinner.class).isVisible() && !field(panel, "recordColumn", JSpinner.class).isVisible(), "vertical mode shows row selector");
-                    field(panel, "recordRow", JSpinner.class).setValue(3);
+                    field(panel, "grid", JTable.class).changeSelection(2, 1, false, false);
+                    equal("3", field(panel, "recordRow", JSpinner.class).getValue().toString(), "clicking a cell updates the local locked-column row selector");
                     mode.setSelectedItem(MappingProfile.Mode.COLUMN_RECORD);
                     equal("3", field(panel, "recordColumn", JSpinner.class).getValue().toString(), "column selection survives mode changes");
                     mode.setSelectedItem(MappingProfile.Mode.FIXED);

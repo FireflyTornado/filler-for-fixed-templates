@@ -127,7 +127,7 @@ public final class TemplateConfigStore {
             Map<Object, Object> next = new LinkedHashMap<>(binding); next.remove("enabled"); converted.add(next);
         }
         Map<Object, Object> nextExtraction = new LinkedHashMap<>(extraction);
-        nextExtraction.put("version", 4); nextExtraction.put("bindings", converted);
+        nextExtraction.put("version", 5); nextExtraction.put("bindings", converted);
         Map<Object, Object> nextRoot = new LinkedHashMap<>(root); nextRoot.put("dataExtraction", nextExtraction);
         try { AtomicConfigWriter.write(file, JsonData.stringify(nextRoot)); }
         catch (IOException failure) {

@@ -93,8 +93,8 @@ Loading, saving, generating, and exporting run as background file tasks. Cancell
 
 1. Select the target template and variable types. Names, identifiers, and dates usually use text; calculation inputs use numeric types.
 2. Open Data Extraction (`数据提取`) and choose an Excel file (`选择 Excel…`). The top flow shows `workbook.xlsx → template.txt/.docx`; template selection is synchronized with Template Filling.
-3. Select a worksheet, Column Titles Row (`列标题所在行`), and Row Titles Column (`行标题所在列`, accepting letters or column numbers). Column letters and titles appear on separate rows at the top; row numbers and titles appear in separate columns on the left. These header areas stay visible while scrolling; hover to read long titles.
-4. Click a variable in the lower table; Current Variable (`当前变量`) displays its name and type. Select the source cell and positioning mode. For a locked row or column, choose All Similar Mappings (`全部同类映射`) to follow the global row/column, or This Mapping Only (`仅此映射`) to save an independent row/column. Then select `添加／更新映射`.
+3. Select a worksheet and set its Column Titles Row (`列标题所在行`), Row Titles Column (`行标题所在列`), global row for locked-column mappings, and global column for locked-row mappings. All four positions are stored independently for each worksheet and restored when switching sheets. Column letters/titles and row numbers/titles remain separately visible while scrolling.
+4. Click a variable in the lower table; Current Variable (`当前变量`) displays its name and type. Select the source cell and positioning mode. All Similar Mappings (`全部同类映射`) uses the current worksheet's global row or column. This Mapping Only (`仅此映射`) reveals an independent row or column selector, which follows the cell clicked in the source table. Then select `添加／更新映射`.
 5. The table shows mode, selection scope, and a contextual source such as `客户表 / C3 / 行标题：张三 / 列标题：电话`. The explanation below uses the same actual resolved titles and shows the old and new values. Apply the current variable or all variables.
 6. Return to Template Filling to review, adjust, generate, and export.
 

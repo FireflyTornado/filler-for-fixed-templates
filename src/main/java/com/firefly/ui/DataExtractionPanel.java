@@ -26,14 +26,14 @@ public final class DataExtractionPanel extends JPanel {
     private final JLabel flow = new JLabel("请选择 Excel 文件 → 请选择模板");
     private final JLabel status = new JLabel("打开表格后，选择数据单元格，再绑定模板变量。");
     private final JTextArea selection = new JTextArea("请选择模板变量和数据来源。", 4, 40);
-    private final JLabel recordLabel = new JLabel(" ");
     private final JLabel savedLabel = new JLabel(" ");
     private final JComboBox<String> sheets = new JComboBox<>();
-    private final JSpinner headerRow = spinner(1), titleColumn = new JSpinner(new SpinnerNumberModel(1, 1, 16_384, 1)), recordRow = spinner(2);
+    private final JSpinner headerRow = spinner(1), titleColumn = columnSpinner(1);
+    private final JSpinner globalRow = spinner(2), globalColumn = columnSpinner(2), recordRow = spinner(2);
     private final JSpinner recordColumn = new JSpinner(new SpinnerNumberModel(2, 1, 16_384, 1));
     private final JComboBox<MappingProfile.SelectionScope> scope = new JComboBox<>(MappingProfile.SelectionScope.values());
     private final JLabel scopeLabel = new JLabel("选择范围");
-    private final JPanel recordSelector = row(new JLabel("选定行列"), recordRow, recordColumn, recordLabel, scopeLabel, scope);
+    private final JPanel recordSelector = row(new JLabel("此映射取值位置"), recordRow, recordColumn);
     private final JComboBox<MappingProfile.Mode> mode = new JComboBox<>(MappingProfile.Mode.values());
     private final JComboBox<MappingProfile.EmptyPolicy> emptyPolicy = new JComboBox<>(MappingProfile.EmptyPolicy.values());
     private final JLabel target = new JLabel("请在下方表格选择变量");
@@ -70,7 +70,7 @@ public final class DataExtractionPanel extends JPanel {
     private int globalRecordRow = 1, globalRecordColumn = 1;
     private long loadSequence, previewSequence;
     private record PreviewResult(List<MappingEngine.Preview> saved, MappingEngine.Preview selected,
-                                 boolean draft, String error) { }
+                                 MappingProfile.Binding editor, boolean draft, String error) { }
 
     public DataExtractionPanel(TemplateSession session, TemplateConfigStore configStore, AppConfig appConfig,
                                FileTaskManager tasks, Runnable saveAppConfig, Runnable chooseTemplate,
@@ -84,6 +84,7 @@ public final class DataExtractionPanel extends JPanel {
         buildUi();
     }
     private static JSpinner spinner(int value) { return new JSpinner(new SpinnerNumberModel(value, 1, 1_048_576, 1)); }
+    private static JSpinner columnSpinner(int value) { return new JSpinner(new SpinnerNumberModel(value, 1, 16_384, 1)); }
     private static JButton button(String text, Runnable action) { JButton b = new JButton(text); b.addActionListener(e -> action.run()); return b; }
     private static JPanel row(Component... components) {
         JPanel panel = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 3));
@@ -94,10 +95,12 @@ public final class DataExtractionPanel extends JPanel {
         flow.setFont(flow.getFont().deriveFont(Font.BOLD));
         headerRow.setEditor(new JSpinner.NumberEditor(headerRow, "第 0 行"));
         titleColumn.setEditor(columnEditor(titleColumn));
-        for (JSpinner spinner : List.of(headerRow, titleColumn)) spinner.setPreferredSize(new Dimension(100, spinner.getPreferredSize().height));
+        globalRow.setEditor(new JSpinner.NumberEditor(globalRow, "第 0 行"));
+        globalColumn.setEditor(columnEditor(globalColumn));
         recordRow.setEditor(new JSpinner.NumberEditor(recordRow, "第 0 行"));
-        recordColumn.setEditor(new JSpinner.NumberEditor(recordColumn, "第 0 列"));
-        for (JSpinner spinner : List.of(recordRow, recordColumn)) spinner.setPreferredSize(new Dimension(105, spinner.getPreferredSize().height));
+        recordColumn.setEditor(columnEditor(recordColumn));
+        for (JSpinner spinner : List.of(headerRow, titleColumn, globalRow, globalColumn, recordRow, recordColumn))
+            spinner.setPreferredSize(new Dimension(105, spinner.getPreferredSize().height));
         sheets.setPreferredSize(new Dimension(145, sheets.getPreferredSize().height));
         top.add(row(button("选择 Excel…", this::chooseExcel), button("刷新表格", this::reload),
                 new JLabel("→"), button("选择模板…", () -> { if (flushMappings()) chooseTemplate.run(); }),
@@ -105,8 +108,11 @@ public final class DataExtractionPanel extends JPanel {
         JPanel flowRow = new JPanel(new BorderLayout()); flowRow.setBorder(BorderFactory.createEmptyBorder(3, 6, 3, 6));
         flowRow.add(flow); top.add(flowRow);
         top.add(row(new JLabel("工作表"), sheets, new JLabel("列标题所在行"), headerRow, new JLabel("行标题所在列"), titleColumn));
+        top.add(row(new JLabel("全部锁定列映射取值行"), globalRow, new JLabel("全部锁定行映射取值列"), globalColumn));
         headerRow.setToolTipText("例如第 1 行写着姓名、电话、金额，就选择第 1 行。");
         titleColumn.setToolTipText("例如 A 列写着张三、李四、王五，就选择 A 列；可输入字母或列序号。");
+        globalRow.setToolTipText("当前工作表中，所有“锁定列＋全部同类映射”共同使用的取值行。");
+        globalColumn.setToolTipText("当前工作表中，所有“锁定行＋全部同类映射”共同使用的取值列。");
         add(top, BorderLayout.NORTH);
 
         grid.setAutoResizeMode(JTable.AUTO_RESIZE_OFF); grid.setCellSelectionEnabled(true);
@@ -121,16 +127,16 @@ public final class DataExtractionPanel extends JPanel {
         grid.getTableHeader().setReorderingAllowed(false);
         JPanel sourcePanel = new JPanel(new BorderLayout(3, 3));
         gridScroll = new SpreadsheetPreview(grid,
-                row -> { if (mode.getSelectedItem() == MappingProfile.Mode.RECORD) recordRow.setValue(row + 1); },
+                row -> { if (mode.getSelectedItem() == MappingProfile.Mode.RECORD) selectedRecordRow(row); },
                 column -> {
-                    if (mode.getSelectedItem() == MappingProfile.Mode.COLUMN_RECORD) recordColumn.setValue(column + 1);
+                    if (mode.getSelectedItem() == MappingProfile.Mode.COLUMN_RECORD) selectedRecordColumn(column);
                 });
         sourcePanel.add(gridScroll);
         selection.setEditable(false); selection.setLineWrap(true); selection.setWrapStyleWord(true);
         sourcePanel.setBorder(BorderFactory.createTitledBorder("表格预览（只读；显示公式已保存的结果）"));
         JPanel mappingPanel = new JPanel(new BorderLayout(3, 3));
         JPanel controls = new JPanel(); controls.setLayout(new BoxLayout(controls, BoxLayout.Y_AXIS));
-        controls.add(row(new JLabel("定位方式"), mode, recordSelector, new JLabel("空值"), emptyPolicy));
+        controls.add(row(new JLabel("定位方式"), mode, scopeLabel, scope, recordSelector, new JLabel("空值"), emptyPolicy));
         mode.setToolTipText("锁定列或行时按标题识别，标题位置调整后仍会尝试重新定位。");
         emptyPolicy.setToolTipText("来源为空：数值可取 0 或保留；文本取 0 会报错，保留原文会显示提示。");
         target.putClientProperty("html.disable", Boolean.TRUE);
@@ -196,10 +202,12 @@ public final class DataExtractionPanel extends JPanel {
         bottom.add(row(applyCurrent, apply, undo, button("前往模板填充", goToFill)), BorderLayout.SOUTH); add(bottom, BorderLayout.SOUTH);
         applyCurrent.setEnabled(false); apply.setEnabled(false); undo.setEnabled(false);
         sheets.addActionListener(e -> { if (!updating) sheetChanged(); });
-        headerRow.addChangeListener(e -> { if (!updating) { refreshGrid(); schedulePreview(); } });
-        titleColumn.addChangeListener(e -> { if (!updating) { refreshGrid(); schedulePreview(); } });
-        recordRow.addChangeListener(e -> { if (!updating) { if (scope.getSelectedItem() == MappingProfile.SelectionScope.GLOBAL) { globalRecordRow = value(recordRow); sourcePicked = false; } showRecord(); schedulePreview(); } });
-        recordColumn.addChangeListener(e -> { if (!updating) { if (scope.getSelectedItem() == MappingProfile.SelectionScope.GLOBAL) { globalRecordColumn = value(recordColumn); sourcePicked = false; } showRecord(); schedulePreview(); } });
+        headerRow.addChangeListener(e -> { if (!updating) sheetSettingsChanged(true); });
+        titleColumn.addChangeListener(e -> { if (!updating) sheetSettingsChanged(true); });
+        globalRow.addChangeListener(e -> { if (!updating) sheetSettingsChanged(false); });
+        globalColumn.addChangeListener(e -> { if (!updating) sheetSettingsChanged(false); });
+        recordRow.addChangeListener(e -> { if (!updating) schedulePreview(); });
+        recordColumn.addChangeListener(e -> { if (!updating) schedulePreview(); });
         mode.addActionListener(e -> { if (!updating) { updateRecordSelector(); schedulePreview(); } });
         scope.addActionListener(e -> { if (!updating) scopeChanged(); });
         emptyPolicy.addActionListener(e -> { if (!updating) schedulePreview(); });
@@ -215,8 +223,8 @@ public final class DataExtractionPanel extends JPanel {
         try {
             if (binding != null) {
                 mode.setSelectedItem(binding.mode()); emptyPolicy.setSelectedItem(binding.emptyPolicy()); scope.setSelectedItem(binding.selectionScope());
-                if (binding.mode() == MappingProfile.Mode.RECORD) recordRow.setValue((binding.selectionScope() == MappingProfile.SelectionScope.LOCAL ? binding.row() : globalRecordRow) + 1);
-                if (binding.mode() == MappingProfile.Mode.COLUMN_RECORD) recordColumn.setValue((binding.selectionScope() == MappingProfile.SelectionScope.LOCAL ? binding.column() : globalRecordColumn) + 1);
+                if (binding.mode() == MappingProfile.Mode.RECORD) recordRow.setValue(binding.row() + 1);
+                if (binding.mode() == MappingProfile.Mode.COLUMN_RECORD) recordColumn.setValue(binding.column() + 1);
             } else scope.setSelectedItem(MappingProfile.SelectionScope.GLOBAL);
         } finally { updating = false; }
         updateRecordSelector(); schedulePreview();
@@ -247,9 +255,10 @@ public final class DataExtractionPanel extends JPanel {
     private void updateRecordSelector() {
         boolean rows = mode.getSelectedItem() == MappingProfile.Mode.RECORD;
         boolean columns = mode.getSelectedItem() == MappingProfile.Mode.COLUMN_RECORD;
-        recordSelector.setVisible(rows || columns); recordRow.setVisible(rows); recordColumn.setVisible(columns);
-        scopeLabel.setVisible(rows || columns); scope.setVisible(rows || columns);
-        showRecord(); recordSelector.getParent().revalidate();
+        boolean local = scope.getSelectedItem() == MappingProfile.SelectionScope.LOCAL;
+        scopeLabel.setVisible(rows || columns); scope.setVisible(rows || columns); recordSelector.setVisible(local && (rows || columns));
+        recordRow.setVisible(rows); recordColumn.setVisible(columns);
+        recordSelector.getParent().revalidate();
     }
     private void scopeChanged() {
         MappingProfile.Binding binding = profile.get(targetVariable);
@@ -257,22 +266,27 @@ public final class DataExtractionPanel extends JPanel {
         updating = true;
         try {
             if (mode.getSelectedItem() == MappingProfile.Mode.RECORD)
-                recordRow.setValue((local && binding != null && binding.mode() == MappingProfile.Mode.RECORD ? binding.row() : globalRecordRow) + 1);
+                recordRow.setValue((local && binding != null && binding.mode() == MappingProfile.Mode.RECORD ? binding.row()
+                        : grid.getSelectedRow() >= 0 ? grid.getSelectedRow() : globalRecordRow) + 1);
             if (mode.getSelectedItem() == MappingProfile.Mode.COLUMN_RECORD)
-                recordColumn.setValue((local && binding != null && binding.mode() == MappingProfile.Mode.COLUMN_RECORD ? binding.column() : globalRecordColumn) + 1);
+                recordColumn.setValue((local && binding != null && binding.mode() == MappingProfile.Mode.COLUMN_RECORD ? binding.column()
+                        : grid.getSelectedColumn() >= 0 ? grid.getSelectedColumn() : globalRecordColumn) + 1);
         } finally { updating = false; }
-        showRecord(); schedulePreview();
+        updateRecordSelector(); schedulePreview();
     }
 
     public void templateChanged() {
         String name = session.templateName();
-        if (!name.equals(templateName)) {
+        boolean changed = !name.equals(templateName);
+        if (changed) {
             templateName = name;
             profile = name.isBlank() ? MappingProfile.EMPTY : configStore.load(name).dataExtraction();
             dirty = false; confirmedFixed.clear(); savedLabel.setText(profile.bindings().isEmpty() ? "尚无映射" : "已载入此模板的映射");
         }
         if (!session.variables().containsKey(targetVariable)) targetVariable = session.variables().keySet().stream().findFirst().orElse("");
-        updateFlow(); loadEditor();
+        updateFlow();
+        if (changed && workbook != null) sheetChanged();
+        loadEditor();
     }
     public void variablesChanged() { updateTargetLabel(); undo.setEnabled(session.canUndoImport()); schedulePreview(); }
     public void disposePanel() {
@@ -328,14 +342,35 @@ public final class DataExtractionPanel extends JPanel {
         SpreadsheetData.Sheet sheet = sheet(); if (sheet == null) return;
         sourcePicked = false;
         MappingProfile.Binding remembered = profile.bindings().stream().filter(b -> b.sheet().equals(sheet.name())).findFirst().orElse(null);
+        MappingProfile.SheetSettings settings = profile.sheetSetting(sheet.name());
+        int selectedHeader = settings != null ? settings.headerRow() : remembered != null ? remembered.headerRow() : 0;
+        int selectedTitleColumn = settings != null ? settings.titleColumn() : remembered != null ? remembered.titleColumn() : 0;
+        int selectedRecordRow = settings != null ? settings.recordRow() : selectedHeader + 1;
+        int selectedRecordColumn = settings != null ? settings.recordColumn() : selectedTitleColumn + 1;
         updating = true;
         try {
-            if (remembered != null) { headerRow.setValue(remembered.headerRow() + 1); titleColumn.setValue(remembered.titleColumn() + 1); }
-            globalRecordRow = Math.min(Math.max(value(headerRow) + 1, 0), Math.max(sheet.rows() - 1, 0));
-            globalRecordColumn = Math.min(Math.max(value(titleColumn) + 1, 0), Math.min(Math.max(sheet.columns() - 1, 0), 16_383));
-            recordRow.setValue(globalRecordRow + 1); recordColumn.setValue(globalRecordColumn + 1);
+            headerRow.setValue(clamp(selectedHeader, sheet.rows()) + 1);
+            titleColumn.setValue(clamp(selectedTitleColumn, sheet.columns()) + 1);
+            globalRecordRow = clamp(selectedRecordRow, sheet.rows());
+            globalRecordColumn = clamp(selectedRecordColumn, sheet.columns());
+            globalRow.setValue(globalRecordRow + 1); globalColumn.setValue(globalRecordColumn + 1);
+            MappingProfile.Binding selected = profile.get(targetVariable);
+            recordRow.setValue((selected != null && selected.mode() == MappingProfile.Mode.RECORD ? selected.row() : globalRecordRow) + 1);
+            recordColumn.setValue((selected != null && selected.mode() == MappingProfile.Mode.COLUMN_RECORD ? selected.column() : globalRecordColumn) + 1);
         } finally { updating = false; }
-        refreshGrid(); schedulePreview();
+        updateRecordSelector(); refreshGrid(); schedulePreview();
+    }
+    private static int clamp(int value, int size) { return Math.min(Math.max(value, 0), Math.max(size - 1, 0)); }
+    private void sheetSettingsChanged(boolean structureChanged) {
+        SpreadsheetData.Sheet sheet = sheet(); if (sheet == null) return;
+        globalRecordRow = value(globalRow); globalRecordColumn = value(globalColumn); sourcePicked = false;
+        MappingProfile.SheetSettings next = new MappingProfile.SheetSettings(sheet.name(), value(headerRow), value(titleColumn),
+                globalRecordRow, globalRecordColumn);
+        if (!next.equals(profile.sheetSetting(sheet.name()))) {
+            profile = profile.withSheetSetting(next); dirty = true; flushMappings();
+        }
+        if (structureChanged) refreshGrid();
+        schedulePreview();
     }
     private static int value(JSpinner spinner) { return ((Number) spinner.getValue()).intValue() - 1; }
     private void refreshGrid() {
@@ -356,17 +391,28 @@ public final class DataExtractionPanel extends JPanel {
             UiFontManager.updateTableRowHeight(grid); UiFontManager.updateTableRowHeight(mappings);
             if (selectedRow >= 0 && selectedColumn >= 0 && selectedRow < grid.getRowCount() && selectedColumn < grid.getColumnCount()) grid.changeSelection(selectedRow, selectedColumn, false, false);
         } finally { updating = false; }
-        showRecord();
-    }
-    private void showRecord() {
-        recordLabel.setText(mode.getSelectedItem() == MappingProfile.Mode.COLUMN_RECORD ? "（" + columnName(value(recordColumn)) + " 列）" : "");
     }
     private void showSelection() {
         if (updating) return;
         SpreadsheetData.Sheet sheet = sheet(); int row = grid.getSelectedRow(), column = grid.getSelectedColumn();
         if (sheet == null || row < 0 || column < 0) { schedulePreview(); return; }
+        if (scope.getSelectedItem() == MappingProfile.SelectionScope.LOCAL) {
+            updating = true;
+            try {
+                if (mode.getSelectedItem() == MappingProfile.Mode.RECORD) recordRow.setValue(row + 1);
+                if (mode.getSelectedItem() == MappingProfile.Mode.COLUMN_RECORD) recordColumn.setValue(column + 1);
+            } finally { updating = false; }
+        }
         sourcePicked = true;
         address.setText(SpreadsheetData.address(row, column)); schedulePreview();
+    }
+    private void selectedRecordRow(int row) {
+        if (scope.getSelectedItem() == MappingProfile.SelectionScope.LOCAL) recordRow.setValue(row + 1);
+        else globalRow.setValue(row + 1);
+    }
+    private void selectedRecordColumn(int column) {
+        if (scope.getSelectedItem() == MappingProfile.SelectionScope.LOCAL) recordColumn.setValue(column + 1);
+        else globalColumn.setValue(column + 1);
     }
     private static String columnName(int column) { return SpreadsheetData.address(0, column).replace("1", ""); }
     private void locate() {
@@ -410,8 +456,8 @@ public final class DataExtractionPanel extends JPanel {
         } else if (grid.getSelectedRowCount() != 1 || grid.getSelectedColumnCount() != 1 || column < 0) {
             throw new IllegalArgumentException("请选择一个数据单元格后绑定。");
         }
-        if (selectedMode == MappingProfile.Mode.RECORD) row = value(recordRow);
-        if (selectedMode == MappingProfile.Mode.COLUMN_RECORD) column = value(recordColumn);
+        if (selectedMode == MappingProfile.Mode.RECORD) row = selectedScope == MappingProfile.SelectionScope.LOCAL ? value(recordRow) : globalRecordRow;
+        if (selectedMode == MappingProfile.Mode.COLUMN_RECORD) column = selectedScope == MappingProfile.SelectionScope.LOCAL ? value(recordColumn) : globalRecordColumn;
         return engine.bind(variable, sheet(), selectedMode, value(headerRow), value(titleColumn), row, column, policy, selectedScope);
     }
     private String selectedVariable() {
@@ -426,9 +472,16 @@ public final class DataExtractionPanel extends JPanel {
     private void removeOrphans() {
         Set<String> active = session.variables().keySet();
         List<String> orphan = profile.bindings().stream().map(MappingProfile.Binding::variable).filter(name -> !active.contains(name)).toList();
-        if (orphan.isEmpty()) { status.setText("没有已从模板移除的变量映射。"); return; }
-        if (JOptionPane.showConfirmDialog(this, "删除以下已不在模板中的映射？\n" + String.join("、", orphan), "清理失效映射", JOptionPane.OK_CANCEL_OPTION) == JOptionPane.OK_OPTION) {
-            for (String name : orphan) profile = profile.remove(name); mappingChanged();
+        Set<String> activeSheets = workbook == null ? profile.sheetSettings().stream().map(MappingProfile.SheetSettings::sheet).collect(java.util.stream.Collectors.toSet())
+                : workbook.sheets().stream().map(SpreadsheetData.Sheet::name).collect(java.util.stream.Collectors.toSet());
+        List<String> staleSheets = profile.sheetSettings().stream().map(MappingProfile.SheetSettings::sheet).filter(name -> !activeSheets.contains(name)).toList();
+        if (orphan.isEmpty() && staleSheets.isEmpty()) { status.setText("没有失效的变量映射或工作表设置。"); return; }
+        String message = (orphan.isEmpty() ? "" : "已从模板移除的变量：\n" + String.join("、", orphan) + "\n")
+                + (staleSheets.isEmpty() ? "" : "当前工作簿中不存在的工作表设置：\n" + String.join("、", staleSheets));
+        if (JOptionPane.showConfirmDialog(this, "清理以下失效内容？\n" + message, "清理失效映射", JOptionPane.OK_CANCEL_OPTION) == JOptionPane.OK_OPTION) {
+            for (String name : orphan) profile = profile.remove(name);
+            if (!staleSheets.isEmpty()) profile = profile.retainSheetSettings(activeSheets);
+            mappingChanged();
         }
     }
     private void mappingChanged() { dirty = true; flushMappings(); schedulePreview(); }
@@ -446,16 +499,18 @@ public final class DataExtractionPanel extends JPanel {
             if (byColumn) {
                 List<Integer> rows = new ArrayList<>();
                 for (int r = 0; r < sheet().rows(); r++) if (SpreadsheetData.normalize(sheet().cell(r, value(titleColumn)).display()).equals(SpreadsheetData.normalize(variable))) rows.add(r);
-                if (rows.size() == 1 && value(recordColumn) > value(titleColumn) && value(recordColumn) < sheet().columns()) {
-                    candidates.add(engine.bind(variable, sheet(), MappingProfile.Mode.COLUMN_RECORD, value(headerRow), value(titleColumn), rows.get(0), value(recordColumn),
+                int selectedColumn = scope.getSelectedItem() == MappingProfile.SelectionScope.LOCAL ? value(recordColumn) : globalRecordColumn;
+                if (rows.size() == 1 && selectedColumn > value(titleColumn) && selectedColumn < sheet().columns()) {
+                    candidates.add(engine.bind(variable, sheet(), MappingProfile.Mode.COLUMN_RECORD, value(headerRow), value(titleColumn), rows.get(0), selectedColumn,
                             (MappingProfile.EmptyPolicy) emptyPolicy.getSelectedItem(), (MappingProfile.SelectionScope) scope.getSelectedItem()));
                 }
                 continue;
             }
             List<Integer> columns = new ArrayList<>();
             for (int c = 0; c < sheet().columns(); c++) if (SpreadsheetData.normalize(sheet().cell(value(headerRow), c).display()).equals(SpreadsheetData.normalize(variable))) columns.add(c);
-            if (columns.size() == 1 && value(recordRow) > value(headerRow) && value(recordRow) < sheet().rows()) {
-                candidates.add(engine.bind(variable, sheet(), MappingProfile.Mode.RECORD, value(headerRow), value(titleColumn), value(recordRow), columns.get(0),
+            int selectedRow = scope.getSelectedItem() == MappingProfile.SelectionScope.LOCAL ? value(recordRow) : globalRecordRow;
+            if (columns.size() == 1 && selectedRow > value(headerRow) && selectedRow < sheet().rows()) {
+                candidates.add(engine.bind(variable, sheet(), MappingProfile.Mode.RECORD, value(headerRow), value(titleColumn), selectedRow, columns.get(0),
                         (MappingProfile.EmptyPolicy) emptyPolicy.getSelectedItem(), (MappingProfile.SelectionScope) scope.getSelectedItem()));
             }
         }
@@ -474,7 +529,9 @@ public final class DataExtractionPanel extends JPanel {
     public void rebuildPreview() {
         previewTimer.stop(); long request = ++previewSequence;
         SpreadsheetData source = workbook; MappingProfile rules = profile; var variables = session.variables();
-        String activeSheet = Objects.toString(sheets.getSelectedItem(), ""); int record = globalRecordRow, column = globalRecordColumn;
+        String activeSheet = Objects.toString(sheets.getSelectedItem(), "");
+        int selectedHeader = value(headerRow), selectedTitleColumn = value(titleColumn);
+        int record = globalRecordRow, column = globalRecordColumn;
         Set<MappingProfile.Binding> fixed = Set.copyOf(confirmedFixed);
         MappingProfile.Binding candidate = null; String candidateError = "";
         try { candidate = editorBinding(); } catch (IllegalArgumentException e) { candidateError = e.getMessage(); }
@@ -488,17 +545,17 @@ public final class DataExtractionPanel extends JPanel {
         final boolean confirmedEditor = sourcePicked || (savedEditor != null && fixed.contains(savedEditor));
         tasks.cancelKind("mapping-preview");
         if (source == null) {
-            previews = engine.preview(null, rules, variables, activeSheet, record, column, fixed, () -> { });
+            previews = engine.preview(null, rules, variables, activeSheet, selectedHeader, selectedTitleColumn, record, column, fixed, () -> { });
             previewPending = false; draftPending = false; showPreviews(); selection.setText("请先打开 Excel 文件并选择模板变量。"); return;
         }
         tasks.submit("mapping-preview", "检查映射", FileTaskManager.LockScope.NONE, true,
                 progress -> {
-                    List<MappingEngine.Preview> saved = engine.preview(source, rules, variables, activeSheet, record, column, fixed, progress::checkpoint);
+                    List<MappingEngine.Preview> saved = engine.preview(source, rules, variables, activeSheet, selectedHeader, selectedTitleColumn, record, column, fixed, progress::checkpoint);
                     MappingEngine.Preview selected = null;
                     if (editor != null) selected = engine.preview(source, MappingProfile.EMPTY.put(editor),
-                            Map.of(editor.variable(), variables.get(editor.variable())), activeSheet, record, column,
+                            Map.of(editor.variable(), variables.get(editor.variable())), activeSheet, selectedHeader, selectedTitleColumn, record, column,
                             confirmedEditor ? Set.of(editor) : Set.of(), progress::checkpoint).get(0);
-                    return new PreviewResult(saved, selected, pending, editorError);
+                    return new PreviewResult(saved, selected, editor, pending, editorError);
                 },
                 result -> {
                     if (request != previewSequence) return;
@@ -513,13 +570,14 @@ public final class DataExtractionPanel extends JPanel {
         if (p == null) {
             selection.setText("模板「" + templateName + "」 · 变量「" + variable + "」\n" + result.error() + "\n上方映射表显示已保存映射；尚未应用。"); return;
         }
+        MappingProfile.Binding binding = result.editor() != null ? result.editor() : profile.get(p.variable());
         String origin = p.match() == null ? "尚未找到有效来源" : "数据来源：" + p.source() + "，内容：" + displayValue(p.display());
         String destination = "模板「" + templateName + "」的变量「" + p.variable() + "」，原值：" + displayValue(p.oldValue());
         String outcome = !p.error().isEmpty() ? "无法填入：" + p.error() : p.apply()
                 ? "将填入：" + displayValue(p.value()) + "；" + p.status() : p.status() + "，不替换现有内容。";
         String state = result.draft() ? "这是待保存的映射预览；请先点击“添加／更新映射”，再应用。" : "以上为已保存映射的取值预览；可应用当前变量或全部变量。";
         if (fileChanged) state = "源文件已变化，此预览不可应用，请先刷新表格。";
-        selection.setText(origin + "\n" + destination + "\n" + outcome + "\n" + state);
+        selection.setText(mappingBasis(binding) + "\n" + origin + "\n" + destination + "\n" + outcome + "\n" + state);
         selection.setCaretPosition(0);
     }
     private static String displayValue(String value) {
@@ -569,6 +627,15 @@ public final class DataExtractionPanel extends JPanel {
                 ? "第 " + ((local ? binding.row() : globalRecordRow) + 1) + " 行"
                 : columnName(local ? binding.column() : globalRecordColumn) + " 列";
         return (local ? "仅此映射：" : "全部同类映射：") + position;
+    }
+    private String mappingBasis(MappingProfile.Binding binding) {
+        if (binding == null) return "定位依据：手工填写";
+        return switch (binding.mode()) {
+            case TITLES -> "定位依据：行标题“" + binding.rowTitle() + "”＋列标题“" + binding.columnTitle() + "”";
+            case RECORD -> "定位依据：锁定列标题“" + binding.columnTitle() + "”；" + selectionDescription(binding);
+            case COLUMN_RECORD -> "定位依据：锁定行标题“" + binding.rowTitle() + "”；" + selectionDescription(binding);
+            case FIXED -> "定位依据：固定位置 " + binding.sheet() + " / " + SpreadsheetData.address(binding.row(), binding.column());
+        };
     }
     public void applyCurrentPreview() { applyPreviews(false); }
     public void applyPreview() {

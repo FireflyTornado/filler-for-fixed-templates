@@ -13,6 +13,15 @@ public final class MappingEngine {
     public List<Preview> preview(SpreadsheetData book, MappingProfile profile,
                                 Map<String, VariableInputState> variables, String activeSheet, int recordRow, int recordColumn,
                                 Set<MappingProfile.Binding> confirmedFixed, Runnable checkpoint) {
+        MappingProfile.SheetSettings settings = profile.sheetSetting(activeSheet);
+        int headerRow = settings == null ? -1 : settings.headerRow();
+        int titleColumn = settings == null ? -1 : settings.titleColumn();
+        return preview(book, profile, variables, activeSheet, headerRow, titleColumn, recordRow, recordColumn, confirmedFixed, checkpoint);
+    }
+
+    public List<Preview> preview(SpreadsheetData book, MappingProfile profile,
+                                Map<String, VariableInputState> variables, String activeSheet, int headerRow, int titleColumn,
+                                int recordRow, int recordColumn, Set<MappingProfile.Binding> confirmedFixed, Runnable checkpoint) {
         List<Preview> result = new ArrayList<>();
         for (var entry : variables.entrySet()) {
             checkpoint.run();
@@ -26,7 +35,7 @@ public final class MappingEngine {
             String source = "原绑定位置：" + sourceText(b.sheet(), b.row(), b.column(), b.rowTitle(), b.columnTitle());
             try {
                 if (book == null) throw new IllegalArgumentException("请先打开 Excel 文件");
-                match = resolve(book, b, activeSheet, recordRow, recordColumn, confirmedFixed.contains(b), checkpoint);
+                match = resolve(book, b, activeSheet, headerRow, titleColumn, recordRow, recordColumn, confirmedFixed.contains(b), checkpoint);
                 cell = match.sheet().cell(match.row(), match.column());
                 source = sourceText(match.sheet().name(), match.row(), match.column(), match.rowTitle(), match.columnTitle());
                 if (!cell.error().isEmpty()) throw new IllegalArgumentException(cell.error());
@@ -76,9 +85,17 @@ public final class MappingEngine {
 
     public Match resolve(SpreadsheetData book, MappingProfile.Binding binding, String activeSheet, int recordRow, int recordColumn,
                          boolean confirmedFixed, Runnable checkpoint) {
+        return resolve(book, binding, activeSheet, -1, -1, recordRow, recordColumn, confirmedFixed, checkpoint);
+    }
+
+    public Match resolve(SpreadsheetData book, MappingProfile.Binding binding, String activeSheet, int headerRow, int titleColumn,
+                         int recordRow, int recordColumn, boolean confirmedFixed, Runnable checkpoint) {
+        if (binding.mode() != MappingProfile.Mode.FIXED && headerRow >= 0 && titleColumn >= 0)
+            return resolveOnActiveSheet(book, binding, activeSheet, headerRow, titleColumn, recordRow, recordColumn);
         List<Match> candidates = new ArrayList<>();
         for (SpreadsheetData.Sheet sheet : book.sheets()) {
             checkpoint.run();
+            if (binding.mode() == MappingProfile.Mode.TITLES && !sheet.name().equals(activeSheet)) continue;
             if (binding.mode() == MappingProfile.Mode.COLUMN_RECORD) {
                 int selectedColumn = binding.selectionScope() == MappingProfile.SelectionScope.LOCAL ? binding.column() : recordColumn;
                 if (!sheet.name().equals(activeSheet) || selectedColumn < 0 || selectedColumn >= sheet.columns()) continue;
@@ -132,12 +149,12 @@ public final class MappingEngine {
                     String titleHeader = binding.titleColumn() < binding.headers().size() ? binding.headers().get(binding.titleColumn()) : "";
                     if (titleHeader.isBlank()) titleColumns.add(binding.titleColumn());
                     else for (int c = 0; c < sheet.columns(); c++) if (SpreadsheetData.normalize(sheet.cell(header[0], c).display()).equals(titleHeader)) titleColumns.add(c);
-                    for (int titleColumn : titleColumns) {
+                    for (int foundTitleColumn : titleColumns) {
                         for (var cell : sheet.cells().entrySet()) {
                             int r = (int) (cell.getKey() >> 32), c = (int) (long) cell.getKey();
-                            if (c == titleColumn && r > header[0] && SpreadsheetData.normalize(cell.getValue().display()).equals(binding.rowTitle())) {
-                                boolean mergedRows = sheet.merges().stream().anyMatch(m -> m.firstRow() == r && m.lastRow() > r && titleColumn >= m.firstColumn() && titleColumn <= m.lastColumn());
-                                if (!mergedRows) candidates.add(match(sheet, r, header[1], header[0], titleColumn, moved(binding, r, header[1])));
+                            if (c == foundTitleColumn && r > header[0] && SpreadsheetData.normalize(cell.getValue().display()).equals(binding.rowTitle())) {
+                                boolean mergedRows = sheet.merges().stream().anyMatch(m -> m.firstRow() == r && m.lastRow() > r && foundTitleColumn >= m.firstColumn() && foundTitleColumn <= m.lastColumn());
+                                if (!mergedRows) candidates.add(match(sheet, r, header[1], header[0], foundTitleColumn, moved(binding, r, header[1])));
                             }
                         }
                     }
@@ -150,6 +167,50 @@ public final class MappingEngine {
                 ? "结构或标题不匹配，请重新绑定；锁定行／列模式还需选择对应工作表及有效的选定行列"
                 : "找到多个同名标题或相似工作表，请重新指定来源");
         return candidates.get(0);
+    }
+
+    private Match resolveOnActiveSheet(SpreadsheetData book, MappingProfile.Binding binding, String activeSheet,
+                                       int headerRow, int titleColumn, int recordRow, int recordColumn) {
+        SpreadsheetData.Sheet sheet = book.sheets().stream().filter(s -> s.name().equals(activeSheet)).findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("请选择映射所使用的工作表"));
+        if (headerRow >= sheet.rows() || titleColumn >= sheet.columns())
+            throw new IllegalArgumentException("当前工作表的列标题所在行或行标题所在列超出范围");
+        int row, column;
+        if (binding.mode() == MappingProfile.Mode.COLUMN_RECORD) {
+            row = uniqueRow(sheet, titleColumn, binding.rowTitle(), 0);
+            column = binding.selectionScope() == MappingProfile.SelectionScope.LOCAL ? binding.column() : recordColumn;
+            if (column <= titleColumn || column >= sheet.columns()) throw new IllegalArgumentException("当前工作表的选定列无效，请调整取值列");
+        } else {
+            column = uniqueColumn(sheet, headerRow, binding.columnTitle());
+            if (binding.mode() == MappingProfile.Mode.RECORD) {
+                row = binding.selectionScope() == MappingProfile.SelectionScope.LOCAL ? binding.row() : recordRow;
+                if (row <= headerRow || row >= sheet.rows()) throw new IllegalArgumentException("当前工作表的选定行无效，请调整取值行");
+            } else {
+                row = uniqueRow(sheet, titleColumn, binding.rowTitle(), headerRow + 1);
+                if (column == titleColumn) throw new IllegalArgumentException("行标题与列标题的交叉位置不是数据单元格");
+            }
+        }
+        return match(sheet, row, column, headerRow, titleColumn, moved(binding, row, column));
+    }
+
+    private int uniqueColumn(SpreadsheetData.Sheet sheet, int headerRow, String title) {
+        List<Integer> matches = new ArrayList<>();
+        for (int column = 0; column < sheet.columns(); column++)
+            if (SpreadsheetData.normalize(sheet.cell(headerRow, column).display()).equals(title)) matches.add(column);
+        if (matches.size() != 1) throw new IllegalArgumentException(matches.isEmpty()
+                ? "当前工作表的列标题所在行未找到“" + shownTitle(title) + "”"
+                : "当前工作表的列标题所在行存在多个“" + shownTitle(title) + "”");
+        return matches.get(0);
+    }
+
+    private int uniqueRow(SpreadsheetData.Sheet sheet, int titleColumn, String title, int firstRow) {
+        List<Integer> matches = new ArrayList<>();
+        for (int row = firstRow; row < sheet.rows(); row++)
+            if (SpreadsheetData.normalize(sheet.cell(row, titleColumn).display()).equals(title)) matches.add(row);
+        if (matches.size() != 1) throw new IllegalArgumentException(matches.isEmpty()
+                ? "当前工作表的行标题所在列未找到“" + shownTitle(title) + "”"
+                : "当前工作表的行标题所在列存在多个“" + shownTitle(title) + "”");
+        return matches.get(0);
     }
     private Match match(SpreadsheetData.Sheet sheet, int row, int column, int titleRow, int titleColumn, String note) {
         return new Match(sheet, row, column, sheet.cell(row, titleColumn).display(), sheet.cell(titleRow, column).display(), note);

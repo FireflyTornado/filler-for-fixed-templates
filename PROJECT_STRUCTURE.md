@@ -77,7 +77,7 @@ flowchart LR
 
 当前读取上限为 128 MB 文件和 30 万个已定义单元格，超限拒绝，不截断。每条映射取一个单元格；当前不实现区域聚合、多表关联、多层表头自动推断或批量生成。
 
-`MappingProfile.Binding` 保存目标变量、工作表提示、定位方式、0 起始坐标、列标题所在行、行标题所在列、标题上下文、空值策略和选定范围。`SelectionScope.GLOBAL` 使用界面的全局行或列，`LOCAL` 使用绑定自身的 `row` 或 `column`；旧映射缺少该字段时默认为 `GLOBAL`。不存在启用状态字段；Excel 文件路径及文件名不参与映射身份。
+`MappingProfile.Binding` 保存目标变量、工作表提示、定位方式、0 起始坐标、创建时读取到的行标题和列标题、标题上下文、空值策略和选定范围。`MappingProfile.SheetSettings` 按工作表名保存列标题所在行、行标题所在列、全局取值行和全局取值列。`SelectionScope.GLOBAL` 使用当前工作表的设置，`LOCAL` 使用绑定自身的 `row` 或 `column`；旧映射缺少该字段时默认为 `GLOBAL`。不存在启用状态字段；Excel 文件路径及文件名不参与映射身份。
 
 | 定位方式 | 匹配规则 |
 | --- | --- |
@@ -107,7 +107,7 @@ flowchart LR
 
 窗口每次使用受屏幕可用范围限制的 1440×1000 默认尺寸，不保存尺寸。`layout.extractionDividerLocation` 保存数据提取上下分隔位置；布局时根据变量表最小可用高度进行显示范围限制，但不覆盖保存的位置。
 
-模板配置通过模板完整相对路径关联。当前配置格式版本为 4，映射子格式版本为 4；缺少映射字段的旧配置按空映射读取。旧 `RECORD` 身份不变，旧 `ERROR`、`CLEAR` 空值策略读取为 `KEEP`，缺少 `selectionScope` 时读取为 `GLOBAL`。`TemplateConfigStore.migrateLegacyMappingStates` 在启动时扫描并原子改写旧配置：删除 `enabled:false` 的映射，移除其余 `enabled` 字段，保留变量和其他原始字段；单文件加载也执行检测。运行时模型和匹配器不保留停用分支。配置模型示例：
+模板配置通过模板完整相对路径关联。当前配置格式版本为 4，映射子格式版本为 5；缺少映射字段的旧配置按空映射读取。版本 5 新增逐工作表的四项位置设置；旧配置在首次调整各工作表时逐步补齐。旧 `RECORD` 身份不变，旧 `ERROR`、`CLEAR` 空值策略读取为 `KEEP`，缺少 `selectionScope` 时读取为 `GLOBAL`。`TemplateConfigStore.migrateLegacyMappingStates` 在启动时扫描并原子改写旧配置：删除 `enabled:false` 的映射，移除其余 `enabled` 字段，保留变量和其他原始字段；单文件加载也执行检测。运行时模型和匹配器不保留停用分支。配置模型示例：
 
 ```json
 {
@@ -115,7 +115,13 @@ flowchart LR
   "template": "报告/月报.docx",
   "decimalPlaces": 2,
   "variables": {},
-  "dataExtraction": { "version": 4, "bindings": [] }
+  "dataExtraction": {
+    "version": 5,
+    "bindings": [],
+    "sheets": [
+      { "sheet": "客户表", "headerRow": 0, "titleColumn": 0, "recordRow": 2, "recordColumn": 2 }
+    ]
+  }
 }
 ```
 
